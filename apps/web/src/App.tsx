@@ -223,6 +223,14 @@ export function App() {
         : new Map<string, MoveQualityAnnotation>(),
     [latestAnnotation, latestAnnotationIsCurrent],
   );
+  const lastMoveArrow = lastMove
+    ? {
+        x1: (lastMove.from.charCodeAt(0) - 97) * 1 + 0.5,
+        y1: 8 - Number(lastMove.from[1]) + 0.5,
+        x2: (lastMove.to.charCodeAt(0) - 97) * 1 + 0.5,
+        y2: 8 - Number(lastMove.to[1]) + 0.5,
+      }
+    : undefined;
   const annotationByHistoryIndex = useMemo(
     () =>
       new Map(
@@ -547,7 +555,7 @@ export function App() {
                       <button
                         key={square}
                         type="button"
-                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}${isLastMoveFrom ? " last-move-from" : ""}${isLastMoveTo ? " last-move-to" : ""}`}
+                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}`}
                         onClick={() => selectSquare(square)}
                         aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${isLastMoveFrom ? ", origen de la última jugada" : ""}${isLastMoveTo ? ", destino de la última jugada" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
                         aria-pressed={isSelected}
@@ -574,6 +582,44 @@ export function App() {
                   })}
                 </div>
               ))}
+              {lastMoveArrow ? (
+                <svg
+                  className={`move-arrow-overlay move-arrow-${lastMoveColor === playerColor ? "player" : "engine"}`}
+                  viewBox="0 0 8 8"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <marker
+                      id="move-arrow-head-player"
+                      markerWidth="0.8"
+                      markerHeight="0.8"
+                      refX="0.65"
+                      refY="0.4"
+                      orient="auto"
+                    >
+                      <path d="M0 0L0.8 0.4L0 0.8Z" />
+                    </marker>
+                    <marker
+                      id="move-arrow-head-engine"
+                      markerWidth="0.8"
+                      markerHeight="0.8"
+                      refX="0.65"
+                      refY="0.4"
+                      orient="auto"
+                    >
+                      <path d="M0 0L0.8 0.4L0 0.8Z" />
+                    </marker>
+                  </defs>
+                  <line
+                    x1={lastMoveArrow.x1}
+                    y1={lastMoveArrow.y1}
+                    x2={lastMoveArrow.x2}
+                    y2={lastMoveArrow.y2}
+                    markerEnd={`url(#move-arrow-head-${lastMoveColor === playerColor ? "player" : "engine"})`}
+                  />
+                </svg>
+              ) : null}
             </div>
             {lastMove ? (
               <p className="last-move-note" aria-live="polite">

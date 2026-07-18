@@ -21,6 +21,7 @@
 - Origen y destino de la última jugada se resaltan en amarillo para jugadas del usuario y de Stockfish.
 - El rastro se deriva de `GameSession.history`, por lo que al deshacer se recalcula el movimiento anterior y sobrevive a recuperación local.
 - El panel muestra SAN, recorrido `origen → destino`, autor y una nota accesible de la última jugada.
+- El rastro visual usa una flecha SVG azul para el jugador y naranja-roja para Stockfish; ya no depende del resaltado amarillo.
 - El tablero limita su tamaño por ancho y por altura (`dvh`), sin overflow horizontal en móvil.
 - Validado en navegador a 390×844 y 1440×700; el tablero cabe horizontalmente y se reduce en ventanas de poca altura.
 

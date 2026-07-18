@@ -3,6 +3,8 @@ import { createDeterministicEngine } from "./index";
 
 const initialPosition =
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const openingAfterE4 =
+  "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 
 describe("deterministic engine", () => {
   it("returns a stable legal line for a valid analysis request", async () => {
@@ -52,6 +54,37 @@ describe("deterministic engine", () => {
     controller.abort();
 
     await expect(analysis).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("prioritizes the e2e4/e7e5 opening fixture deterministically", async () => {
+    const engine = createDeterministicEngine();
+
+    await expect(
+      engine.analyze({
+        id: "opening-e4-e5",
+        fen: openingAfterE4,
+        perspective: "black",
+        multiPv: 2,
+        limit: { kind: "nodes", nodes: 500 },
+      }),
+    ).resolves.toEqual({
+      id: "opening-e4-e5",
+      perspective: "black",
+      depth: 1,
+      nodes: 20,
+      lines: [
+        {
+          rank: 1,
+          score: { kind: "centipawns", value: 0 },
+          moves: ["e7e5"],
+        },
+        {
+          rank: 2,
+          score: { kind: "centipawns", value: -10 },
+          moves: ["a7a5"],
+        },
+      ],
+    });
   });
 
   it("refuses new work after disposal", async () => {

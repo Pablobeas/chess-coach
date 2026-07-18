@@ -44,6 +44,9 @@ export function boardForFen(fen: string): ReadonlyMap<Square, Piece> {
 export const boardSquares = ranks.flatMap((rank) =>
   files.map((file) => `${file}${rank}` as Square),
 );
+export const boardRows = ranks.map((rank) =>
+  files.map((file) => `${file}${rank}` as Square),
+);
 export const pieceSymbols: Record<PlayerColor, Record<PieceType, string>> = {
   white: { p: "♙", n: "♘", b: "♗", r: "♖", q: "♕", k: "♔" },
   black: { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" },
@@ -59,4 +62,17 @@ export const playMove = (game: GameSession, from: Square, to: Square) =>
     to,
     ...(to[1] === "1" || to[1] === "8" ? { promotion: "q" as const } : {}),
   });
+export const playUciMove = (game: GameSession, uci: string) => {
+  const from = uci.slice(0, 2) as Square;
+  const to = uci.slice(2, 4) as Square;
+  const legalMove = listLegalMoves(game.fen).find((move) => move.uci === uci);
+  if (!legalMove) throw new Error(`Illegal engine move: ${uci}`);
+  return applyMove(game, {
+    from,
+    to,
+    ...(legalMove.promotion === undefined
+      ? {}
+      : { promotion: legalMove.promotion }),
+  });
+};
 export const undoMove = (game: GameSession) => undoLastMove(game);

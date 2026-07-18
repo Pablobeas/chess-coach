@@ -50,6 +50,9 @@ export class InvalidAnalysisRequestError extends Error {
 
 const SIMULATED_DEPTH = 1;
 const CENTIPAWN_STEP_PER_RANK = 10;
+const OPENING_AFTER_E4_FEN =
+  "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+const OPENING_AFTER_E4_RESPONSE = "e7e5";
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -80,6 +83,29 @@ function validateRequest(request: AnalysisRequest): void {
   }
 }
 
+function compareLegalMoves(
+  fen: string,
+  left: { readonly uci: string },
+  right: { readonly uci: string },
+): number {
+  const preferredMove =
+    fen === OPENING_AFTER_E4_FEN ? OPENING_AFTER_E4_RESPONSE : undefined;
+
+  if (left.uci === preferredMove) {
+    return -1;
+  }
+
+  if (right.uci === preferredMove) {
+    return 1;
+  }
+
+  if (left.uci < right.uci) {
+    return -1;
+  }
+
+  return left.uci > right.uci ? 1 : 0;
+}
+
 export function createDeterministicEngine(): ChessEngine {
   let disposed = false;
 
@@ -94,14 +120,8 @@ export function createDeterministicEngine(): ChessEngine {
 
       throwIfAborted(signal);
       validateRequest(request);
-      const legalMoves = [...listLegalMoves(request.fen)].sort(
-        (left, right) => {
-          if (left.uci < right.uci) {
-            return -1;
-          }
-
-          return left.uci > right.uci ? 1 : 0;
-        },
+      const legalMoves = [...listLegalMoves(request.fen)].sort((left, right) =>
+        compareLegalMoves(request.fen, left, right),
       );
 
       await Promise.resolve();

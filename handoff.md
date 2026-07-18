@@ -5,7 +5,7 @@
 - Repositorio: `Pablobeas/chess-coach`
 - Rama: `agent/local-game-slice`
 - PR draft: https://github.com/Pablobeas/chess-coach/pull/1
-- Último checkpoint publicado: `ae3814c docs: update development handoff`.
+- Último checkpoint publicado: `dd9f0b7 feat: build production MVP foundations`.
 - Arquitectura: monorepo pnpm con `apps/web`, `packages/chess-core`, `packages/engine` y `packages/coach`.
 - Producto: PWA web responsive, sin cuentas, telemetría, LLM, Ollama ni APIs en el camino crítico.
 - Metodología: vertical feature slices con TDD para reglas, UCI, concurrencia, métricas y persistencia.

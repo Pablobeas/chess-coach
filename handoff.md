@@ -16,6 +16,14 @@
 - Persistencia local v2 con migración desde v1, anotaciones validadas por índice/UCI y último feedback recuperable tras recargar.
 - Validado en navegador: SVG, insignia `✓`, bandejas vacías, feedback y recuperación de partida/anotación.
 
+### Slice de rastro y responsive
+
+- Origen y destino de la última jugada se resaltan en amarillo para jugadas del usuario y de Stockfish.
+- El rastro se deriva de `GameSession.history`, por lo que al deshacer se recalcula el movimiento anterior y sobrevive a recuperación local.
+- El panel muestra SAN, recorrido `origen → destino`, autor y una nota accesible de la última jugada.
+- El tablero limita su tamaño por ancho y por altura (`dvh`), sin overflow horizontal en móvil.
+- Validado en navegador a 390×844 y 1440×700; el tablero cabe horizontalmente y se reduce en ventanas de poca altura.
+
 ## Evidencia reproducible
 
 - `apps/web/public/stockfish-smoke.html` ejecuta el smoke sin React, sin service worker y sin cliente de engine.

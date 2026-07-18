@@ -14,6 +14,7 @@
 - [x] Presets de fuerza, cancelación, fallback y protección contra resultados obsoletos.
 - [x] Deshacer, pausar, abandonar, reiniciar y nueva partida.
 - [x] Piezas SVG bicolor y bandejas de capturas.
+- [x] Rastro persistente de origen/destino y última jugada tras deshacer.
 - [ ] Reloj opcional.
 
 ## Fase 2 — Entrenador
@@ -36,5 +37,6 @@
 
 - [x] Base PWA instalable y service worker.
 - [ ] E2E móvil/escritorio y perfil de rendimiento.
+- [x] Layout responsive validado en viewport móvil y escritorio.
 - [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.
 - [ ] Estrategia de actualización del Worker/WASM y beta sin telemetría.

@@ -196,6 +196,14 @@ export function App() {
     settings.playerColor === "random" ? "white" : settings.playerColor;
   const engineColor: PlayerColor = playerColor === "white" ? "black" : "white";
   const board = useMemo(() => boardForFen(game.fen), [game.fen]);
+  const lastMove = game.history.at(-1);
+  const lastMoveIndex = game.history.length - 1;
+  const lastMoveColor =
+    lastMoveIndex >= 0 &&
+    ((game.initialFen.split(" ")[1] === "w" && lastMoveIndex % 2 === 0) ||
+      (game.initialFen.split(" ")[1] !== "w" && lastMoveIndex % 2 === 1))
+      ? "white"
+      : "black";
   const captures = useMemo(() => listCaptures(game), [game]);
   const capturedByColor = useMemo(
     () => ({
@@ -533,13 +541,15 @@ export function App() {
                     const isSelected = selected === square;
                     const isDestination = destinations.includes(square);
                     const squareQuality = qualityBySquare.get(square);
+                    const isLastMoveFrom = lastMove?.from === square;
+                    const isLastMoveTo = lastMove?.to === square;
                     return (
                       <button
                         key={square}
                         type="button"
-                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}`}
+                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}${isLastMoveFrom ? " last-move-from" : ""}${isLastMoveTo ? " last-move-to" : ""}`}
                         onClick={() => selectSquare(square)}
-                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
+                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${isLastMoveFrom ? ", origen de la última jugada" : ""}${isLastMoveTo ? ", destino de la última jugada" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
                         aria-pressed={isSelected}
                         disabled={
                           paused ||
@@ -565,6 +575,13 @@ export function App() {
                 </div>
               ))}
             </div>
+            {lastMove ? (
+              <p className="last-move-note" aria-live="polite">
+                Última jugada: <strong>{lastMove.san}</strong> · {lastMove.from}{" "}
+                → {lastMove.to} ·{" "}
+                {lastMoveColor === playerColor ? "Tú" : "Stockfish"}
+              </p>
+            ) : null}
             <div className="captured-trays">
               <CapturedTray
                 capturer={playerColor}
@@ -676,6 +693,11 @@ export function App() {
                       <span>{index + 1}.</span>
                       <span className="move-entry">
                         {move.san}
+                        <small
+                          aria-label={`Recorrido ${move.from} a ${move.to}`}
+                        >
+                          {move.from} → {move.to}
+                        </small>
                         {annotationByHistoryIndex.get(index) ? (
                           <QualityBadge
                             label={annotationByHistoryIndex.get(index)!.label}

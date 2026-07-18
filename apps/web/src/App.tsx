@@ -5,10 +5,7 @@ import {
   type GameSession,
   type PlayerColor,
 } from "@chess-coach/chess-core";
-import {
-  createDeterministicEngine,
-  type ChessEngine,
-} from "@chess-coach/engine";
+import type { ChessEngine, EngineBackend } from "@chess-coach/engine";
 import {
   analyzeMove,
   hintForLevel,
@@ -41,6 +38,12 @@ const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
 const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
+const backendLabel = (backend: EngineBackend) =>
+  backend === "stockfish-wasm"
+    ? "Stockfish WASM"
+    : backend === "stockfish-asmjs"
+      ? "Stockfish ASM.js · modo compatible"
+      : "Motor determinista";
 
 function getRecoveredState(): {
   readonly session: GameSession;
@@ -84,7 +87,8 @@ export function App() {
   );
   const generation = useRef(0);
   const engineRef = useRef<ChessEngine | null>(null);
-  const fallbackEngineRef = useRef<ChessEngine | null>(null);
+  const coachEngineRef = useRef<ChessEngine | null>(null);
+  const [engineBackend, setEngineBackend] = useState<EngineBackend>();
   const playerColor: PlayerColor =
     settings.playerColor === "random" ? "white" : settings.playerColor;
   const engineColor: PlayerColor = playerColor === "white" ? "black" : "white";
@@ -102,7 +106,7 @@ export function App() {
   useEffect(
     () => () => {
       void engineRef.current?.dispose();
-      void fallbackEngineRef.current?.dispose();
+      void coachEngineRef.current?.dispose();
     },
     [],
   );
@@ -157,17 +161,21 @@ export function App() {
           return applyEngineLine(current, uci);
         });
         setEngineState("ready");
+        setEngineBackend(engine.getStatus().backend);
         setEngineMessage(
-          `Respuesta aplicada: ${uci}. Profundidad ${result.depth}, ${result.nodes.toLocaleString("es-ES")} nodos.`,
+          `${backendLabel(engine.getStatus().backend)}: respuesta aplicada ${uci}. Profundidad ${result.depth}, ${result.nodes.toLocaleString("es-ES")} nodos.`,
         );
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
         if (generation.current !== currentGeneration) return;
-        const fallback = (fallbackEngineRef.current ??=
-          createDeterministicEngine());
-        void fallback
+        setEngineState("error");
+        setSessionError(
+          "Stockfish WASM y el modo compatible ASM.js no pudieron iniciarse.",
+        );
+        return;
+        /* legacy fallback intentionally disabled
           .analyze(
             {
               id: `fallback-${requestId}`,
@@ -201,7 +209,7 @@ export function App() {
             setEngineMessage(
               "No se pudo analizar la posición. Puedes reintentar o reiniciar.",
             );
-          });
+          }); */
       });
 
     return () => {
@@ -257,39 +265,35 @@ export function App() {
     if (selected && destinations.includes(square)) {
       setGame((current) => {
         const next = playMove(current, selected, square);
-        const analysisEngine = (fallbackEngineRef.current ??=
-          createDeterministicEngine());
-        void Promise.all([
-          analysisEngine.analyze({
+        const analysisEngine = (coachEngineRef.current ??=
+          createBrowserStockfishEngine());
+        void (async () => {
+          const beforeResult = await analysisEngine.analyze({
             id: `coach-before-${current.history.length}`,
             fen: current.fen,
             perspective: playerColor,
             multiPv: 1,
             limit: { kind: "time", milliseconds: 1 },
-          }),
-          analysisEngine.analyze({
+          });
+          const afterResult = await analysisEngine.analyze({
             id: `coach-after-${next.history.length}`,
             fen: next.fen,
             perspective: playerColor,
             multiPv: 1,
             limit: { kind: "time", milliseconds: 1 },
-          }),
-        ])
-          .then(([beforeResult, afterResult]) => {
-            const beforeLine = beforeResult.lines[0];
-            const afterLine = afterResult.lines[0];
-            if (!beforeLine || !afterLine) return;
-            const nextFeedback = analyzeMove(
-              current,
-              next,
-              beforeLine,
-              afterLine,
-            );
-            setFeedback(nextFeedback);
-          })
-          .catch(() => {
-            setSessionError("No se pudo generar el feedback de esta jugada.");
           });
+          const beforeLine = beforeResult.lines[0];
+          const afterLine = afterResult.lines[0];
+          if (!beforeLine || !afterLine) return;
+          setFeedback(analyzeMove(current, next, beforeLine, afterLine));
+          setEngineBackend(analysisEngine.getStatus().backend);
+        })().catch((error: unknown) => {
+          setSessionError(
+            error instanceof Error
+              ? `No se pudo generar el feedback: ${error.message}`
+              : "No se pudo generar el feedback de esta jugada.",
+          );
+        });
         return next;
       });
       setSelected(undefined);
@@ -424,7 +428,10 @@ export function App() {
           </section>
           <aside className="side-panel" aria-label="Controles y movimientos">
             <section className="engine-status" aria-live="polite">
-              <p className="label">Motor local · {settings.enginePreset}</p>
+              <p className="label">
+                {engineBackend ? backendLabel(engineBackend) : "Motor local"} ·{" "}
+                {settings.enginePreset}
+              </p>
               <strong data-state={engineState}>
                 {engineState === "thinking"
                   ? "Analizando"

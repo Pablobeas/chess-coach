@@ -24,6 +24,7 @@ describe("deterministic engine", () => {
       }),
     ).resolves.toEqual({
       id: "opening-1",
+      backend: "deterministic",
       perspective: "white",
       depth: 1,
       nodes: 20,
@@ -73,6 +74,7 @@ describe("deterministic engine", () => {
       }),
     ).resolves.toEqual({
       id: "opening-e4-e5",
+      backend: "deterministic",
       perspective: "black",
       depth: 1,
       nodes: 20,
@@ -109,13 +111,19 @@ describe("deterministic engine", () => {
 
 class FakeUciWorker implements UciWorkerLike {
   readonly messages: string[] = [];
-  private readonly listeners = {
+  protected readonly listeners = {
     message: new Set<(event: MessageEvent<string>) => void>(),
     error: new Set<(event: ErrorEvent) => void>(),
   };
 
   postMessage(message: string): void {
     this.messages.push(message);
+    if (message === "uci") {
+      queueMicrotask(() => {
+        for (const listener of this.listeners.message)
+          listener(new MessageEvent("message", { data: "uciok" }));
+      });
+    }
     if (message.startsWith("go ")) {
       queueMicrotask(() => {
         for (const listener of this.listeners.message)
@@ -141,6 +149,18 @@ class FakeUciWorker implements UciWorkerLike {
   terminate(): void {}
 }
 
+class FailingUciWorker extends FakeUciWorker {
+  override postMessage(message: string): void {
+    this.messages.push(message);
+    if (message === "uci") {
+      queueMicrotask(() => {
+        for (const listener of this.listeners.error)
+          listener({ message: "WASM unavailable" } as ErrorEvent);
+      });
+    }
+  }
+}
+
 describe("UCI worker engine", () => {
   it("translates a worker response into a typed legal line", async () => {
     const worker = new FakeUciWorker();
@@ -158,6 +178,25 @@ describe("UCI worker engine", () => {
       moves: ["e2e4", "e7e5"],
       score: { kind: "centipawns", value: 24 },
     });
+    expect(result.backend).toBe("stockfish-wasm");
     expect(worker.messages).toContain("setoption name Skill Level value 2");
+  });
+
+  it("surfaces a bootstrap failure instead of simulating a result", async () => {
+    const engine = createUciWorkerEngine(
+      new FailingUciWorker(),
+      "stockfish-wasm",
+    );
+
+    await expect(
+      engine.analyze({
+        id: "uci-bootstrap-error",
+        fen: initialPosition,
+        perspective: "white",
+        preset: "beginner",
+        multiPv: 1,
+        limit: { kind: "time", milliseconds: 10 },
+      }),
+    ).rejects.toThrow("WASM unavailable");
   });
 });

@@ -2,6 +2,13 @@
 
 ## Estado actual
 
+### Evidencia checkpoint Stockfish
+
+- ASM.js local validado en navegador con `uciok`, `info` y `bestmove` legal.
+- El motor determinista queda restringido a tests y desarrollo; no se usa como fallback de producción.
+- WASM aún falla en este entorno: no solicita el `.wasm` y termina en timeout de handshake.
+- El fallback determinista no se usa en producción; no publicar hasta resolver WASM o aprobar ASM.js como backend principal.
+
 - Repositorio: `Pablobeas/chess-coach`
 - Rama: `agent/local-game-slice`
 - PR draft: https://github.com/Pablobeas/chess-coach/pull/1

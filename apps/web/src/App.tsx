@@ -45,6 +45,10 @@ interface NavigationSnapshot {
   readonly annotations: readonly MoveQualityAnnotation[];
   readonly feedback?: CoachFeedback;
 }
+type PositionNotice = {
+  readonly kind: "check" | "checkmate";
+  readonly checkedColor: PlayerColor;
+};
 const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
 const backendLabel = (backend: EngineBackend) =>
@@ -186,6 +190,7 @@ export function App() {
     () => recovered?.feedback,
   );
   const [redoStack, setRedoStack] = useState<readonly NavigationSnapshot[]>([]);
+  const [positionNotice, setPositionNotice] = useState<PositionNotice>();
   const [selected, setSelected] = useState<Square>();
   const [engineState, setEngineState] = useState<EngineState>("idle");
   const [paused, setPaused] = useState(false);
@@ -195,6 +200,7 @@ export function App() {
   );
   const generation = useRef(0);
   const annotationGeneration = useRef(0);
+  const previousHistoryLength = useRef(game.history.length);
   const engineRef = useRef<ChessEngine | null>(null);
   const coachEngineRef = useRef<ChessEngine | null>(null);
   const [engineBackend, setEngineBackend] = useState<EngineBackend>();
@@ -262,6 +268,29 @@ export function App() {
       feedback,
     );
   }, [feedback, game, moveAnnotations, settings, started]);
+
+  useEffect(() => {
+    const previousLength = previousHistoryLength.current;
+    previousHistoryLength.current = game.history.length;
+    if (game.history.length <= previousLength) return;
+
+    if (game.isCheckmate) {
+      setPositionNotice({ kind: "checkmate", checkedColor: game.turn });
+    } else if (game.isCheck) {
+      setPositionNotice({ kind: "check", checkedColor: game.turn });
+    } else {
+      setPositionNotice(undefined);
+    }
+  }, [game]);
+
+  useEffect(() => {
+    if (!positionNotice) return;
+    const timer = window.setTimeout(
+      () => setPositionNotice(undefined),
+      positionNotice.kind === "checkmate" ? 5200 : 2800,
+    );
+    return () => window.clearTimeout(timer);
+  }, [positionNotice]);
 
   useEffect(
     () => () => {
@@ -453,7 +482,9 @@ export function App() {
   const reset = () => {
     generation.current += 1;
     annotationGeneration.current += 1;
-    setGame(createLocalGame(initialSnapshot));
+    const initialGame = createLocalGame(initialSnapshot);
+    previousHistoryLength.current = initialGame.history.length;
+    setGame(initialGame);
     setMoveAnnotations([]);
     setRedoStack([]);
     setSelected(undefined);
@@ -493,7 +524,6 @@ export function App() {
     setSelected(undefined);
     setPaused(true);
     setSessionError(undefined);
-    setFeedback(undefined);
     setEngineState("idle");
     setEngineMessage("El motor local está disponible.");
   };
@@ -504,6 +534,7 @@ export function App() {
     generation.current += 1;
     annotationGeneration.current += 1;
     const remaining = redoStack.slice(0, -1);
+    previousHistoryLength.current = next.session.history.length;
     setRedoStack(remaining);
     setGame(next.session);
     setMoveAnnotations(next.annotations);
@@ -550,7 +581,9 @@ export function App() {
     try {
       const imported = loadPgn(await file.text());
       generation.current += 1;
-      setGame(createLocalGame(imported));
+      const importedGame = createLocalGame(imported);
+      previousHistoryLength.current = importedGame.history.length;
+      setGame(importedGame);
       annotationGeneration.current += 1;
       setMoveAnnotations([]);
       setRedoStack([]);
@@ -567,6 +600,26 @@ export function App() {
 
   return (
     <main className="shell">
+      {positionNotice ? (
+        <div
+          className={`position-notice position-notice-${positionNotice.kind}`}
+          role="alert"
+          aria-live="assertive"
+        >
+          <span className="position-notice-icon" aria-hidden="true">
+            {positionNotice.kind === "checkmate" ? "♛" : "!"}
+          </span>
+          <span>
+            <strong>
+              {positionNotice.kind === "checkmate" ? "¡Jaque mate!" : "¡Jaque!"}
+            </strong>
+            <small>
+              El rey de {colorName(positionNotice.checkedColor)} está en{" "}
+              {positionNotice.kind === "checkmate" ? "jaque mate" : "jaque"}.
+            </small>
+          </span>
+        </div>
+      ) : null}
       <section className="game" aria-labelledby="page-title">
         <header className="game-header">
           <div>

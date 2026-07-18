@@ -16,6 +16,7 @@
 - [x] Piezas SVG bicolor y bandejas de capturas.
 - [x] Rastro persistente de origen/destino y última jugada tras deshacer.
 - [x] Navegación atrás/adelante con bloqueo al llegar a la última jugada.
+- [x] Aviso visual y accesible para jaque y jaque mate.
 - [ ] Reloj opcional.
 
 ## Fase 2 — Entrenador

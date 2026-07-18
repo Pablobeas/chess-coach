@@ -22,6 +22,18 @@ describe("chess-core", () => {
     const game = loadPosition("8/8/8/8/8/8/4k3/6K1 b - - 0 1");
 
     expect(game.turn).toBe("black");
+    expect(game.isCheck).toBe(false);
+    expect(game.isCheckmate).toBe(false);
+  });
+
+  it("exposes check and checkmate status in the snapshot", () => {
+    const check = loadPosition("7k/6Q1/8/8/8/5K2/8/8 b - - 0 1");
+    const checkmate = loadPosition("7k/6Q1/5K2/8/8/8/8/8 b - - 0 1");
+
+    expect(check.isCheck).toBe(true);
+    expect(check.isCheckmate).toBe(false);
+    expect(checkmate.isCheck).toBe(true);
+    expect(checkmate.isCheckmate).toBe(true);
   });
 
   it("applies a legal move and records an immutable session history", () => {

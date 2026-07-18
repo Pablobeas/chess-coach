@@ -29,6 +29,8 @@ export interface GameSnapshot {
   readonly pgn: string;
   readonly turn: PlayerColor;
   readonly isGameOver: boolean;
+  readonly isCheck: boolean;
+  readonly isCheckmate: boolean;
 }
 
 export interface GameSession extends GameSnapshot {
@@ -99,6 +101,8 @@ function snapshot(game: Chess): GameSnapshot {
     pgn: game.pgn(),
     turn: toPlayerColor(game.turn()),
     isGameOver: game.isGameOver(),
+    isCheck: game.isCheck(),
+    isCheckmate: game.isCheckmate(),
   });
 }
 

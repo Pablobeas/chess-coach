@@ -22,6 +22,8 @@
 - El rastro se deriva de `GameSession.history`, por lo que al deshacer se recalcula el movimiento anterior y sobrevive a recuperación local.
 - El panel muestra SAN, recorrido `origen → destino`, autor y una nota accesible de la última jugada.
 - El rastro visual usa una flecha SVG azul para el jugador y naranja-roja para Stockfish; ya no depende del resaltado amarillo.
+- Los controles de navegación son botones visuales ←/→, con etiquetas accesibles; el avance queda deshabilitado al llegar a la última jugada.
+- Jaque y jaque mate se anuncian con un popup animado, color diferenciado, texto explicativo y soporte para `prefers-reduced-motion`, tanto tras jugadas del usuario como del motor.
 - Lanzador Windows disponible como `play` y `play.cmd`: inicia el servidor local, espera a que esté listo y abre `http://localhost:5173`.
 - Navegación de jugadas con flechas atrás/adelante: rehacer restaura sesión, anotaciones y feedback; adelante queda deshabilitado en la última jugada y retroceder pausa la partida para revisar.
 - El tablero limita su tamaño por ancho y por altura (`dvh`), sin overflow horizontal en móvil.

@@ -5,7 +5,7 @@
 - Repositorio: `Pablobeas/chess-coach`
 - Rama: `agent/local-game-slice`
 - PR draft: https://github.com/Pablobeas/chess-coach/pull/1
-- Último checkpoint publicado: `2aa7e58 feat: add local playable game slice`; esta ronda aún está pendiente de commit/push.
+- Último checkpoint publicado: `be7d1c8 fix: complete local engine game flow`.
 - Arquitectura: monorepo pnpm con `apps/web`, `packages/chess-core`, `packages/engine` y `packages/coach`.
 - Política de producto: MVP sin LLM ni Ollama; feedback determinista basado en reglas y motor local.
 - Metodología: vertical feature slices con TDD para reglas, UCI, concurrencia, métricas y persistencia.
@@ -41,4 +41,5 @@ El tablero local ya tiene movimientos legales, historial SAN, deshacer, reinicio
 
 - No hacer release hasta que el usuario acepte el slice.
 - El motor real Stockfish/WASM en Worker es el siguiente gran incremento después de cerrar esta ronda.
+- Validación de esta ronda: `pnpm check`, `pnpm format:check`, `git diff --check` y smoke test `e4 → e5` en navegador.
 - Antes de compactar la conversación, actualizar este archivo con commit, pruebas, PR y pendientes.

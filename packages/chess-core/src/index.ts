@@ -146,6 +146,24 @@ export function loadPosition(fen: string): GameSession {
   return createSession(createChess(fen), fen, []);
 }
 
+export function restoreSession(session: GameSession): GameSession {
+  return createSession(replay(session), session.initialFen, session.history);
+}
+
+export function loadPgn(pgn: string): GameSession {
+  const game = new Chess();
+  try {
+    game.loadPgn(pgn);
+  } catch {
+    throw new InvalidGameSessionError();
+  }
+  const history = game
+    .history({ verbose: true })
+    .map((move) => toMoveRecord(move));
+  const initialFen = new Chess().fen();
+  return createSession(game, initialFen, history);
+}
+
 export function applyMove(session: GameSession, move: MoveInput): GameSession {
   assertMoveInput(move);
   const game = replay(session);

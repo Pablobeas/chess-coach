@@ -68,6 +68,9 @@ importers:
       "@chess-coach/chess-core":
         specifier: workspace:*
         version: link:../chess-core
+      stockfish:
+        specifier: 18.0.8
+        version: 18.0.8
 
 packages:
   "@emnapi/core@1.11.1":
@@ -842,6 +845,13 @@ packages:
         integrity: sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==,
       }
 
+  stockfish@18.0.8:
+    resolution:
+      {
+        integrity: sha512-z+f2UMPXLylDBGjv9e9zU8QulY7hUl8MYHesLRrdddewlOXjJrUSmtNmbtID1/F72EPhq0CCkCNxgWS5MQVWtQ==,
+      }
+    hasBin: true
+
   tinybench@2.9.0:
     resolution:
       {
@@ -1325,6 +1335,8 @@ snapshots:
   stackback@0.0.2: {}
 
   std-env@4.2.0: {}
+
+  stockfish@18.0.8: {}
 
   tinybench@2.9.0: {}
 

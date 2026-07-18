@@ -3,34 +3,36 @@
 ## Fase 0 — Cimientos
 
 - [x] Monorepo, configuración de Codex y agentes especializados.
-- [x] Contratos iniciales de dominio, motor y entrenador.
+- [x] Contratos de dominio, motor y entrenador.
 - [x] Aplicación web mínima y tests iniciales.
-- [ ] Selección, licencia y registro del artefacto Stockfish/WASM.
+- [x] Artefacto Stockfish/WASM registrado, versionado y documentado.
 
 ## Fase 1 — Partida local
 
-- [ ] Tablero accesible con movimientos legales.
-- [ ] Adaptador UCI real dentro de Web Worker.
-- [ ] Oponente con fuerza configurable y cancelación robusta.
-- [ ] Reloj opcional, deshacer, abandonar y nueva partida.
+- [x] Tablero accesible con movimientos legales.
+- [ ] Adaptador UCI real dentro de Web Worker validado en navegador.
+- [x] Presets de fuerza, cancelación, fallback y protección contra resultados obsoletos.
+- [x] Deshacer, pausar, abandonar, reiniciar y nueva partida.
+- [ ] Reloj opcional.
 
 ## Fase 2 — Entrenador
 
-- [ ] Evidencia antes/después y WDL normalizado.
-- [ ] Clasificación calibrada con tests de invariantes.
-- [ ] Motivos tácticos y estratégicos iniciales.
-- [ ] Pistas progresivas y flechas configurables.
+- [x] Contrato de evidencia antes/después y pérdida esperada.
+- [x] Clasificación determinista con tests.
+- [ ] Evidencia real Stockfish y WDL normalizado en la UI.
+- [ ] Detectores tácticos y estratégicos verificables completos.
+- [ ] Pistas progresivas 1/2/3, flechas, evaluación y amenazas.
 
 ## Fase 3 — Sesión y revisión
 
-- [ ] Persistencia local y recuperación.
-- [ ] Exportación/importación PGN.
-- [ ] Resumen de momentos críticos.
-- [ ] Ajustes de accesibilidad, sonido y nivel de ayuda.
+- [x] Persistencia local versionada y recuperación.
+- [x] Exportación/importación PGN.
+- [ ] Resumen final y momentos críticos.
+- [x] Configuración de accesibilidad, sonido y nivel de ayuda.
 
 ## Fase 4 — Preparación pública
 
+- [x] Base PWA instalable y service worker.
 - [ ] E2E móvil/escritorio y perfil de rendimiento.
-- [ ] Auditoría de privacidad, licencias y accesibilidad.
-- [ ] PWA instalable y estrategia de actualizaciones del Worker/WASM.
-- [ ] Beta con telemetría estrictamente opt-in.
+- [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.
+- [ ] Estrategia de actualización del Worker/WASM y beta sin telemetría.

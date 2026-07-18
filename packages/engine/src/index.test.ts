@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createDeterministicEngine } from "./index";
+import {
+  createDeterministicEngine,
+  createUciWorkerEngine,
+  type UciWorkerLike,
+} from "./index";
 
 const initialPosition =
   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -100,5 +104,60 @@ describe("deterministic engine", () => {
         limit: { kind: "time", milliseconds: 10 },
       }),
     ).rejects.toThrow("Engine has been disposed");
+  });
+});
+
+class FakeUciWorker implements UciWorkerLike {
+  readonly messages: string[] = [];
+  private readonly listeners = {
+    message: new Set<(event: MessageEvent<string>) => void>(),
+    error: new Set<(event: ErrorEvent) => void>(),
+  };
+
+  postMessage(message: string): void {
+    this.messages.push(message);
+    if (message.startsWith("go ")) {
+      queueMicrotask(() => {
+        for (const listener of this.listeners.message)
+          listener(
+            new MessageEvent("message", {
+              data: "info depth 8 nodes 42 score cp 24 pv e2e4 e7e5",
+            }),
+          );
+        for (const listener of this.listeners.message)
+          listener(new MessageEvent("message", { data: "bestmove e2e4" }));
+      });
+    }
+  }
+
+  addEventListener(type: "message" | "error", listener: never): void {
+    this.listeners[type].add(listener as never);
+  }
+
+  removeEventListener(type: "message" | "error", listener: never): void {
+    this.listeners[type].delete(listener as never);
+  }
+
+  terminate(): void {}
+}
+
+describe("UCI worker engine", () => {
+  it("translates a worker response into a typed legal line", async () => {
+    const worker = new FakeUciWorker();
+    const engine = createUciWorkerEngine(worker);
+    const result = await engine.analyze({
+      id: "uci-1",
+      fen: initialPosition,
+      perspective: "white",
+      preset: "beginner",
+      multiPv: 1,
+      limit: { kind: "time", milliseconds: 10 },
+    });
+
+    expect(result.lines[0]).toMatchObject({
+      moves: ["e2e4", "e7e5"],
+      score: { kind: "centipawns", value: 24 },
+    });
+    expect(worker.messages).toContain("setoption name Skill Level value 2");
   });
 });

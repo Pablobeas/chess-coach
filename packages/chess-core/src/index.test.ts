@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyMove,
   createInitialGame,
+  loadPgn,
   loadPosition,
+  restoreSession,
   undoLastMove,
 } from "./index";
 
@@ -55,5 +57,14 @@ describe("chess-core", () => {
     expect(restored.fen).toBe(afterWhite.fen);
     expect(restored.pgn).toBe(afterWhite.pgn);
     expect(restored.history).toEqual(afterWhite.history);
+  });
+
+  it("imports PGN and restores a serialized session", () => {
+    const imported = loadPgn("1. e4 e5");
+
+    expect(imported.history.map((move) => move.san)).toEqual(["e4", "e5"]);
+    expect(restoreSession(JSON.parse(JSON.stringify(imported)))).toEqual(
+      imported,
+    );
   });
 });

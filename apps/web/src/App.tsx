@@ -1,6 +1,22 @@
-import { createInitialGame, type GameSession } from "@chess-coach/chess-core";
-import { createDeterministicEngine } from "@chess-coach/engine";
+import {
+  createInitialGame,
+  loadPgn,
+  restoreSession,
+  type GameSession,
+  type PlayerColor,
+} from "@chess-coach/chess-core";
+import {
+  createDeterministicEngine,
+  type ChessEngine,
+} from "@chess-coach/engine";
+import {
+  analyzeMove,
+  hintForLevel,
+  type CoachFeedback,
+} from "@chess-coach/coach";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { GameSetup } from "./GameSetup";
+import { createBrowserStockfishEngine } from "./engineClient";
 import {
   boardForFen,
   boardRows,
@@ -12,25 +28,66 @@ import {
   type Square,
   undoMove,
 } from "./localGame";
+import {
+  clearStoredGame,
+  DEFAULT_SETTINGS,
+  exportPgn,
+  loadStoredGame,
+  saveStoredGame,
+  type GameSettings,
+} from "./persistence";
 
 const initialSnapshot = createInitialGame();
-const engine = createDeterministicEngine();
 type EngineState = "idle" | "thinking" | "ready" | "error";
-const colorName = (color: "white" | "black") =>
+const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
+
+function getRecoveredState(): {
+  readonly session: GameSession;
+  readonly settings: GameSettings;
+} | null {
+  if (typeof window === "undefined") return null;
+  const stored = loadStoredGame(window.localStorage);
+  if (!stored) return null;
+  try {
+    return {
+      session: restoreSession(stored.session),
+      settings: stored.settings,
+    };
+  } catch {
+    clearStoredGame(window.localStorage);
+    return null;
+  }
+}
 
 function applyEngineLine(current: GameSession, uci: string): GameSession {
   return playUciMove(current, uci);
 }
 
 export function App() {
-  const [game, setGame] = useState(() => createLocalGame(initialSnapshot));
+  const recovered = useMemo(getRecoveredState, []);
+  const [started, setStarted] = useState(() => recovered !== null);
+  const [hasSavedGame, setHasSavedGame] = useState(() => recovered !== null);
+  const [settings, setSettings] = useState<GameSettings>(
+    () => recovered?.settings ?? DEFAULT_SETTINGS,
+  );
+  const [game, setGame] = useState(() =>
+    createLocalGame(recovered?.session ?? initialSnapshot),
+  );
   const [selected, setSelected] = useState<Square>();
   const [engineState, setEngineState] = useState<EngineState>("idle");
+  const [paused, setPaused] = useState(false);
+  const [sessionError, setSessionError] = useState<string>();
+  const [feedback, setFeedback] = useState<CoachFeedback>();
   const [engineMessage, setEngineMessage] = useState(
-    "El motor simulado está disponible.",
+    "El motor local está disponible.",
   );
   const generation = useRef(0);
+  const engineRef = useRef<ChessEngine | null>(null);
+  const fallbackEngineRef = useRef<ChessEngine | null>(null);
+  const playerColor: PlayerColor =
+    settings.playerColor === "random" ? "white" : settings.playerColor;
+  const engineColor: PlayerColor = playerColor === "white" ? "black" : "white";
   const board = useMemo(() => boardForFen(game.fen), [game.fen]);
   const destinations = useMemo(
     () => (selected ? legalDestinations(game, selected) : []),
@@ -38,22 +95,47 @@ export function App() {
   );
 
   useEffect(() => {
-    if (game.history.length === 0 || game.turn !== "black") return;
+    if (!started || typeof window === "undefined") return;
+    saveStoredGame(game, settings, window.localStorage);
+  }, [game, settings, started]);
+
+  useEffect(
+    () => () => {
+      void engineRef.current?.dispose();
+      void fallbackEngineRef.current?.dispose();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!started || paused || game.turn !== engineColor) return;
+    const engineMayStart = game.history.length === 0 && engineColor === "white";
+    if (game.history.length === 0 && !engineMayStart) return;
     const controller = new AbortController();
     const currentGeneration = ++generation.current;
     const requestFen = game.fen;
     const requestHistoryLength = game.history.length;
+    const requestId = `analysis-${currentGeneration}-${requestHistoryLength}`;
     setEngineState("thinking");
-    setEngineMessage("El motor simulado está analizando la posición.");
+    setEngineMessage("El motor local está analizando la posición.");
+    const engine = (engineRef.current ??= createBrowserStockfishEngine());
 
     void engine
       .analyze(
         {
-          id: `analysis-${currentGeneration}-${requestHistoryLength}`,
+          id: requestId,
           fen: requestFen,
-          perspective: game.turn,
+          perspective: playerColor,
+          preset: settings.enginePreset,
           multiPv: 1,
-          limit: { kind: "time", milliseconds: 500 },
+          limit: {
+            kind: "time",
+            milliseconds: {
+              beginner: 250,
+              intermediate: 700,
+              advanced: 1500,
+            }[settings.enginePreset],
+          },
         },
         controller.signal,
       )
@@ -61,7 +143,7 @@ export function App() {
         if (
           controller.signal.aborted ||
           generation.current !== currentGeneration ||
-          result.id !== `analysis-${currentGeneration}-${requestHistoryLength}`
+          result.id !== requestId
         )
           return;
         const uci = result.lines[0]?.moves[0];
@@ -76,29 +158,140 @@ export function App() {
         });
         setEngineState("ready");
         setEngineMessage(
-          `Respuesta aplicada: ${uci}. Análisis: profundidad ${result.depth}, ${result.nodes.toLocaleString("es-ES")} nodos.`,
+          `Respuesta aplicada: ${uci}. Profundidad ${result.depth}, ${result.nodes.toLocaleString("es-ES")} nodos.`,
         );
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
         if (generation.current !== currentGeneration) return;
-        setEngineState("error");
-        setEngineMessage(
-          "No se pudo analizar la posición. Puedes reiniciar la partida.",
-        );
+        const fallback = (fallbackEngineRef.current ??=
+          createDeterministicEngine());
+        void fallback
+          .analyze(
+            {
+              id: `fallback-${requestId}`,
+              fen: requestFen,
+              perspective: playerColor,
+              preset: settings.enginePreset,
+              multiPv: 1,
+              limit: { kind: "time", milliseconds: 1 },
+            },
+            controller.signal,
+          )
+          .then((result) => {
+            const uci = result.lines[0]?.moves[0];
+            if (!uci || generation.current !== currentGeneration) return;
+            setGame((current) => {
+              if (
+                current.fen !== requestFen ||
+                current.history.length !== requestHistoryLength
+              )
+                return current;
+              return applyEngineLine(current, uci);
+            });
+            setEngineState("ready");
+            setEngineMessage(
+              `Motor WASM no disponible; respuesta local aplicada: ${uci}.`,
+            );
+          })
+          .catch(() => {
+            if (generation.current !== currentGeneration) return;
+            setEngineState("error");
+            setEngineMessage(
+              "No se pudo analizar la posición. Puedes reintentar o reiniciar.",
+            );
+          });
       });
 
     return () => {
       controller.abort();
       generation.current += 1;
     };
-  }, [game.fen, game.history.length, game.turn]);
+  }, [
+    engineColor,
+    game.fen,
+    game.history.length,
+    game.turn,
+    playerColor,
+    paused,
+    settings.enginePreset,
+    started,
+  ]);
+
+  if (!started) {
+    return (
+      <GameSetup
+        initialSettings={settings}
+        hasSavedGame={hasSavedGame}
+        onStart={(nextSettings) => {
+          const selectedColor: PlayerColor =
+            nextSettings.playerColor === "random"
+              ? Math.random() < 0.5
+                ? "white"
+                : "black"
+              : nextSettings.playerColor;
+          const resolvedSettings: GameSettings = {
+            ...nextSettings,
+            playerColor: selectedColor,
+          };
+          generation.current += 1;
+          clearStoredGame();
+          setSettings(resolvedSettings);
+          setGame(createLocalGame(initialSnapshot));
+          setHasSavedGame(false);
+          setStarted(true);
+        }}
+        onResume={() => setStarted(true)}
+        onClearSavedGame={() => {
+          clearStoredGame();
+          setHasSavedGame(false);
+        }}
+      />
+    );
+  }
 
   const selectSquare = (square: Square) => {
-    if (engineState === "thinking" || game.turn !== "white") return;
+    if (paused || engineState === "thinking" || game.turn !== playerColor)
+      return;
     if (selected && destinations.includes(square)) {
-      setGame((current) => playMove(current, selected, square));
+      setGame((current) => {
+        const next = playMove(current, selected, square);
+        const analysisEngine = (fallbackEngineRef.current ??=
+          createDeterministicEngine());
+        void Promise.all([
+          analysisEngine.analyze({
+            id: `coach-before-${current.history.length}`,
+            fen: current.fen,
+            perspective: playerColor,
+            multiPv: 1,
+            limit: { kind: "time", milliseconds: 1 },
+          }),
+          analysisEngine.analyze({
+            id: `coach-after-${next.history.length}`,
+            fen: next.fen,
+            perspective: playerColor,
+            multiPv: 1,
+            limit: { kind: "time", milliseconds: 1 },
+          }),
+        ])
+          .then(([beforeResult, afterResult]) => {
+            const beforeLine = beforeResult.lines[0];
+            const afterLine = afterResult.lines[0];
+            if (!beforeLine || !afterLine) return;
+            const nextFeedback = analyzeMove(
+              current,
+              next,
+              beforeLine,
+              afterLine,
+            );
+            setFeedback(nextFeedback);
+          })
+          .catch(() => {
+            setSessionError("No se pudo generar el feedback de esta jugada.");
+          });
+        return next;
+      });
       setSelected(undefined);
       return;
     }
@@ -109,16 +302,60 @@ export function App() {
     generation.current += 1;
     setGame(createLocalGame(initialSnapshot));
     setSelected(undefined);
+    setPaused(false);
+    setSessionError(undefined);
+    setFeedback(undefined);
     setEngineState("idle");
-    setEngineMessage("El motor simulado está disponible.");
+    setEngineMessage("El motor local está disponible.");
   };
 
   const undo = () => {
     generation.current += 1;
     setGame((current) => undoMove(current));
     setSelected(undefined);
+    setPaused(false);
+    setSessionError(undefined);
+    setFeedback(undefined);
     setEngineState("idle");
-    setEngineMessage("El motor simulado está disponible.");
+    setEngineMessage("El motor local está disponible.");
+  };
+
+  const abandon = () => {
+    if (!window.confirm("¿Abandonar esta partida y borrar su guardado local?"))
+      return;
+    generation.current += 1;
+    clearStoredGame();
+    setHasSavedGame(false);
+    setStarted(false);
+    setPaused(false);
+  };
+
+  const downloadPgn = () => {
+    const blob = new Blob([exportPgn(game)], {
+      type: "application/x-chess-pgn",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "chess-coach-partida.pgn";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importPgnFile = async (file: File) => {
+    try {
+      const imported = loadPgn(await file.text());
+      generation.current += 1;
+      setGame(createLocalGame(imported));
+      setSelected(undefined);
+      setPaused(false);
+      setSessionError(undefined);
+      setFeedback(undefined);
+      setEngineState("idle");
+      setEngineMessage("PGN importado. La partida puede continuar.");
+    } catch {
+      setSessionError("El archivo no contiene un PGN válido o legal.");
+    }
   };
 
   return (
@@ -130,7 +367,8 @@ export function App() {
             <h1 id="page-title">Tablero de práctica</h1>
           </div>
           <p className="turn" aria-live="polite">
-            Turno de {colorName(game.turn)}
+            Turno de {colorName(game.turn)} · Tú juegas con{" "}
+            {colorName(playerColor)}
           </p>
         </header>
         <div className="game-layout">
@@ -160,7 +398,11 @@ export function App() {
                         onClick={() => selectSquare(square)}
                         aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}`}
                         aria-pressed={isSelected}
-                        disabled={engineState === "thinking"}
+                        disabled={
+                          paused ||
+                          engineState === "thinking" ||
+                          game.turn !== playerColor
+                        }
                       >
                         {piece ? (
                           <span aria-hidden="true">
@@ -182,7 +424,7 @@ export function App() {
           </section>
           <aside className="side-panel" aria-label="Controles y movimientos">
             <section className="engine-status" aria-live="polite">
-              <p className="label">Motor local</p>
+              <p className="label">Motor local · {settings.enginePreset}</p>
               <strong data-state={engineState}>
                 {engineState === "thinking"
                   ? "Analizando"
@@ -205,7 +447,60 @@ export function App() {
               <button type="button" className="secondary" onClick={reset}>
                 Reiniciar
               </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setPaused((value) => !value)}
+                disabled={engineState === "thinking"}
+              >
+                {paused ? "Reanudar" : "Pausar"}
+              </button>
+              <button type="button" className="secondary" onClick={abandon}>
+                Abandonar
+              </button>
             </div>
+            <div className="file-controls" aria-label="PGN">
+              <button type="button" onClick={downloadPgn}>
+                Exportar PGN
+              </button>
+              <label className="file-button">
+                Importar PGN
+                <input
+                  type="file"
+                  accept=".pgn,text/plain,application/x-chess-pgn"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void importPgnFile(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {sessionError ? (
+              <p className="session-error" role="alert">
+                {sessionError}
+              </p>
+            ) : null}
+            {feedback ? (
+              <section className="feedback" aria-labelledby="feedback-title">
+                <div className="moves-heading">
+                  <h2 id="feedback-title">Feedback de tu jugada</h2>
+                  <strong>{feedback.label}</strong>
+                </div>
+                <p>{feedback.explanation}</p>
+                <p className="feedback-meta">
+                  Pérdida esperada: {(feedback.loss * 100).toFixed(1)} puntos
+                  porcentuales · Motivo: {feedback.motif}
+                  {feedback.isEstimated ? " · estimación calibrada" : ""}
+                </p>
+                {hintForLevel(feedback, 1, settings.helpLevel) ? (
+                  <p>
+                    <strong>Pista:</strong>{" "}
+                    {hintForLevel(feedback, 1, settings.helpLevel)}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
             <section className="moves" aria-labelledby="moves-title">
               <div className="moves-heading">
                 <h2 id="moves-title">Movimientos</h2>

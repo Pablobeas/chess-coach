@@ -124,6 +124,12 @@ class FakeUciWorker implements UciWorkerLike {
           listener(new MessageEvent("message", { data: "uciok" }));
       });
     }
+    if (message === "isready") {
+      queueMicrotask(() => {
+        for (const listener of this.listeners.message)
+          listener(new MessageEvent("message", { data: "readyok" }));
+      });
+    }
     if (message.startsWith("go ")) {
       queueMicrotask(() => {
         for (const listener of this.listeners.message)
@@ -179,6 +185,8 @@ describe("UCI worker engine", () => {
       score: { kind: "centipawns", value: 24 },
     });
     expect(result.backend).toBe("stockfish-wasm");
+    expect(worker.messages).toContain("isready");
+    expect(worker.messages).toContain(`position fen ${initialPosition}`);
     expect(worker.messages).toContain("setoption name Skill Level value 2");
   });
 

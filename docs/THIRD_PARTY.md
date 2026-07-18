@@ -17,6 +17,11 @@ source license and copyright notice remain distributed with the public asset.
 Any production redistribution must keep this notice and provide the corresponding
 source as required by GPLv3.
 
+For `stockfish-18-lite-single.js`, the browser Worker URL must contain only the
+encoded WASM URL in its fragment. The `,worker` suffix is reserved by
+Stockfish.js for its internal pthread worker branch and must not be appended to
+this single-threaded browser entrypoint.
+
 `apps/web/public/stockfish/launcher.js` is the local bootstrap used by the
 compatibility path. It does not contain engine code and is covered by the
 project license.

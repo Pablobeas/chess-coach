@@ -10,7 +10,7 @@
 ## Fase 1 — Partida local
 
 - [x] Tablero accesible con movimientos legales.
-- [ ] Adaptador UCI real dentro de Web Worker validado en navegador.
+- [x] Adaptador UCI real dentro de Web Worker validado en navegador.
 - [x] Presets de fuerza, cancelación, fallback y protección contra resultados obsoletos.
 - [x] Deshacer, pausar, abandonar, reiniciar y nueva partida.
 - [ ] Reloj opcional.

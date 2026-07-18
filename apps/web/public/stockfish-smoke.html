@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stockfish WASM smoke</title>
+    <style>
+      body {
+        font-family: monospace;
+        margin: 2rem;
+        white-space: pre-wrap;
+      }
+      [data-status="pass"] {
+        color: green;
+      }
+      [data-status="fail"] {
+        color: crimson;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Stockfish WASM smoke</h1>
+    <output id="result" data-status="running">running</output>
+    <script>
+      (() => {
+        const output = document.querySelector("#result");
+        const params = new URLSearchParams(location.search);
+        const wasmPath =
+          params.get("wasm") || "/stockfish/stockfish-18-lite-single.wasm";
+        const enginePath =
+          params.get("engine") || "/stockfish/stockfish-18-lite-single.js";
+        const start = performance.now();
+        const messages = [];
+        const events = [];
+        const initialMoves = new Set([
+          "a2a3",
+          "a2a4",
+          "b2b3",
+          "b2b4",
+          "c2c3",
+          "c2c4",
+          "d2d3",
+          "d2d4",
+          "e2e3",
+          "e2e4",
+          "f2f3",
+          "f2f4",
+          "g2g3",
+          "g2g4",
+          "h2h3",
+          "h2h4",
+          "b1a3",
+          "b1c3",
+          "g1f3",
+          "g1h3",
+        ]);
+
+        const finish = (status, payload) => {
+          output.dataset.status = status;
+          output.textContent = JSON.stringify(payload, null, 2);
+        };
+
+        const run = async () => {
+          const wasmUrl = new URL(wasmPath, location.origin).toString();
+          const response = await fetch(wasmUrl, { cache: "no-store" });
+          const bytes = await response.arrayBuffer();
+          const validWasm = WebAssembly.validate(bytes);
+          if (!response.ok || !validWasm) {
+            finish("fail", {
+              stage: "wasm-response",
+              status: response.status,
+              contentType: response.headers.get("content-type"),
+              bytes: bytes.byteLength,
+              validWasm,
+            });
+            return;
+          }
+
+          const workerUrl = new URL(enginePath, location.origin);
+          workerUrl.hash = encodeURIComponent(wasmUrl);
+          events.push({ stage: "worker-created", url: workerUrl.toString() });
+          const worker = new Worker(workerUrl.toString(), { type: "classic" });
+          let infoSeen = false;
+          let uciokSeen = false;
+          let readyokSeen = false;
+          const timer = setTimeout(() => {
+            worker.terminate();
+            finish("fail", {
+              stage: "timeout",
+              events,
+              messages,
+              workerUrl: workerUrl.toString(),
+              elapsedMs: Math.round(performance.now() - start),
+            });
+          }, 15000);
+
+          worker.onerror = (event) => {
+            clearTimeout(timer);
+            finish("fail", {
+              stage: "worker-error",
+              message: event.message,
+              events,
+              messages,
+            });
+          };
+          worker.onmessage = (event) => {
+            messages.push(event.data);
+            if (event.data === "uciok") {
+              uciokSeen = true;
+              events.push({ stage: "uciok" });
+              worker.postMessage("isready");
+            }
+            if (event.data === "readyok") {
+              readyokSeen = true;
+              events.push({ stage: "readyok" });
+              worker.postMessage("position startpos");
+              worker.postMessage("go movetime 1000");
+            }
+            if (
+              typeof event.data === "string" &&
+              event.data.startsWith("info ")
+            ) {
+              infoSeen = true;
+            }
+            if (
+              typeof event.data === "string" &&
+              event.data.startsWith("bestmove ")
+            ) {
+              clearTimeout(timer);
+              const bestmove = event.data.split(/\s+/)[1];
+              const legal = initialMoves.has(bestmove);
+              events.push({ stage: "bestmove", bestmove, legal });
+              finish(
+                uciokSeen && readyokSeen && infoSeen && legal ? "pass" : "fail",
+                {
+                  stage: "complete",
+                  uciokSeen,
+                  readyokSeen,
+                  infoSeen,
+                  bestmove,
+                  legal,
+                  events,
+                  messages: messages.slice(-20),
+                  workerUrl: workerUrl.toString(),
+                  elapsedMs: Math.round(performance.now() - start),
+                },
+              );
+              worker.terminate();
+            }
+          };
+
+          setTimeout(() => worker.postMessage("uci"), 2500);
+        };
+
+        void run().catch((error) =>
+          finish("fail", {
+            stage: "harness-error",
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      })();
+    </script>
+  </body>
+</html>

@@ -174,42 +174,6 @@ export function App() {
         setSessionError(
           "Stockfish WASM y el modo compatible ASM.js no pudieron iniciarse.",
         );
-        return;
-        /* legacy fallback intentionally disabled
-          .analyze(
-            {
-              id: `fallback-${requestId}`,
-              fen: requestFen,
-              perspective: playerColor,
-              preset: settings.enginePreset,
-              multiPv: 1,
-              limit: { kind: "time", milliseconds: 1 },
-            },
-            controller.signal,
-          )
-          .then((result) => {
-            const uci = result.lines[0]?.moves[0];
-            if (!uci || generation.current !== currentGeneration) return;
-            setGame((current) => {
-              if (
-                current.fen !== requestFen ||
-                current.history.length !== requestHistoryLength
-              )
-                return current;
-              return applyEngineLine(current, uci);
-            });
-            setEngineState("ready");
-            setEngineMessage(
-              `Motor WASM no disponible; respuesta local aplicada: ${uci}.`,
-            );
-          })
-          .catch(() => {
-            if (generation.current !== currentGeneration) return;
-            setEngineState("error");
-            setEngineMessage(
-              "No se pudo analizar la posición. Puedes reintentar o reiniciar.",
-            );
-          }); */
       });
 
     return () => {

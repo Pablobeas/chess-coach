@@ -26,7 +26,9 @@ function createWorker(
   );
   if (backend === "stockfish-wasm") {
     const wasm = new URL(WASM, window.location.origin).toString();
-    script.hash = `${encodeURIComponent(wasm)},worker`;
+    // stockfish.js 18 uses `,worker` for its internal pthread worker. The
+    // single-threaded browser entrypoint must receive only the WASM URL.
+    script.hash = encodeURIComponent(wasm);
   } else {
     script.searchParams.set("engine", "asm");
   }
@@ -42,7 +44,9 @@ function validateResult(
     listLegalMoves(requestFen).map((candidate) => candidate.uci),
   );
   if (!move || !legal.has(move)) {
-    throw new EngineUnavailableError("Stockfish returned an illegal move");
+    throw new EngineUnavailableError(
+      `Stockfish returned an illegal move (${move ?? "none"}) for FEN ${requestFen}`,
+    );
   }
   return result;
 }

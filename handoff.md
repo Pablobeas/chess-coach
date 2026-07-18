@@ -2,54 +2,49 @@
 
 ## Estado actual
 
-### Evidencia checkpoint Stockfish
+- Incidencia de bootstrap Stockfish WASM resuelta en el entorno local.
+- Causa: el sufijo `,worker` de Stockfish.js 18 activa la rama de pthreads internos; el artefacto `lite-single` necesita recibir únicamente la URL codificada del `.wasm` en el fragmento.
+- El cliente crea el Worker directamente sobre `stockfish-18-lite-single.js`; no hay Worker anidado para WASM.
+- El motor determinista queda restringido a tests y desarrollo. No se usa como fallback de producción.
+- ASM.js continúa como fallback local mediante `launcher.js`.
 
-- ASM.js local validado en navegador con `uciok`, `info` y `bestmove` legal.
-- El motor determinista queda restringido a tests y desarrollo; no se usa como fallback de producción.
-- WASM aún falla en este entorno: no solicita el `.wasm` y termina en timeout de handshake.
-- El fallback determinista no se usa en producción; no publicar hasta resolver WASM o aprobar ASM.js como backend principal.
+## Evidencia reproducible
 
-- Repositorio: `Pablobeas/chess-coach`
-- Rama: `agent/local-game-slice`
-- PR draft: https://github.com/Pablobeas/chess-coach/pull/1
-- Último checkpoint publicado: `dd9f0b7 feat: build production MVP foundations`.
-- Arquitectura: monorepo pnpm con `apps/web`, `packages/chess-core`, `packages/engine` y `packages/coach`.
-- Producto: PWA web responsive, sin cuentas, telemetría, LLM, Ollama ni APIs en el camino crítico.
-- Metodología: vertical feature slices con TDD para reglas, UCI, concurrencia, métricas y persistencia.
+- `apps/web/public/stockfish-smoke.html` ejecuta el smoke sin React, sin service worker y sin cliente de engine.
+- En `http://127.0.0.1:5177/stockfish-smoke.html`: petición `.wasm` HTTP 200, `Content-Type: application/wasm`, `WebAssembly.validate() = true`, `uciok`, `readyok`, `info` y `bestmove e2e4` legal.
+- Tiempo observado del smoke WASM: aproximadamente 3,6 segundos incluyendo carga y análisis.
+- En la aplicación real: `Stockfish WASM`, respuesta legal `e7e6`/`e7e5` y feedback antes/después generado por el motor real.
 
-## Implementado en el checkpoint actual
+## Implementado en este slice
 
-- Stockfish 18 lite single-thread versionado en `apps/web/public/stockfish/`, con hashes, licencia GPL-3.0 y aviso en `docs/THIRD_PARTY.md`.
-- Contrato UCI cancelable con presets principiante/intermedio/avanzado, request generation, descarte de resultados obsoletos, timeout y `dispose`.
-- Fallback determinista local explícito cuando el Worker WASM no responde.
-- Configuración de nueva partida: color, fuerza, nivel de ayuda y preferencias visuales.
-- Jugador negro con primera jugada automática del motor, recuperación local versionada y borrado de datos.
-- Pausar, reanudar, deshacer, reiniciar y abandonar.
-- Importación y exportación PGN, con validación legal al importar.
-- Feedback determinista visible después de la jugada del usuario: evidencia antes/después, clasificación, pérdida esperada, motivo y pista según nivel de ayuda.
-- PWA base: manifest, icono, service worker y registro desde `main.tsx`.
-- Regresiones unitarias de chess-core, engine/UCI, coach, persistencia y UI.
+- Contrato UCI cancelable con presets, handshake `uci → isready`, estados `loading`, `ready`, `analyzing`, `error` y `disposed`.
+- Validación de legalidad contra el FEN solicitado y descarte por generación/request id.
+- Fallback local Stockfish ASM.js sin fallback determinista silencioso.
+- Launcher con diagnóstico de errores de carga para ASM.js.
+- Artefactos Stockfish 18.0.8, hashes SHA-256, GPLv3 y avisos en `docs/THIRD_PARTY.md`.
+- Smoke browser independiente en `apps/web/public/stockfish-smoke.html`.
 
-## Validación del checkpoint
+## Validación
 
-- `pnpm test` — verde, 17 tests.
+- `pnpm test` — verde.
 - `pnpm typecheck` — verde.
 - `pnpm build` — verde.
 - `pnpm format:check` — verde.
 - `git diff --check` — verde.
-- Smoke browser previo: configuración y flujo `e4 → e5` verificados.
+- Smoke browser WASM — verde.
 
-## Riesgos y pendientes prioritarios
+## Pendientes del producto, fuera de esta incidencia
 
-1. El archivo precompilado Stockfish ejecutado directamente como Worker no ha emitido UCI en el smoke browser; hay que resolver el bootstrap WASM con un wrapper Worker dedicado o confirmar el formato esperado por el paquete. No declarar Stockfish real operativo hasta repetir la prueba con `uciok`, `info` y `bestmove`.
-2. El feedback actual usa el engine determinista para la evidencia visible; debe conectarse al análisis Stockfish antes/después cuando el Worker esté operativo.
-3. Faltan detectores verificables completos: material, piezas colgadas, jaques, amenazas, rey, desarrollo, jugada única y equivalencias.
-4. Faltan pistas 2/3 interactivas, flechas, barra de evaluación y amenaza principal en el tablero.
-5. Faltan revisión final, momentos críticos, reloj opcional, migraciones futuras y E2E Playwright de escritorio/móvil.
-6. Hay que revisar la estrategia de caché del service worker, accesibilidad WCAG 2.2, rendimiento del WASM y documentación de publicación.
+- E2E automatizado para los flujos críticos y fallback ASM.js en los cuatro motores de navegador.
+- Detectores pedagógicos completos, pistas progresivas, flechas, amenazas y barra de evaluación.
+- Resumen final, momentos críticos y revisión de partida.
+- Auditoría WCAG 2.2, rendimiento, caché/offline y estrategia de actualización.
+- WDL normalizado visible en la UI; el feedback actual usa puntuación/calibración determinista sobre evidencia Stockfish.
 
-## Próximo slice recomendado
+## Repositorio
 
-Crear `stockfish.worker.ts` como wrapper explícito que cargue el WASM servido desde `/stockfish/`, responda al handshake UCI y exponga errores; añadir una prueba de navegador que demuestre `uciok → bestmove`. Después sustituir la evidencia determinista del panel de feedback por dos análisis reales y continuar con detectores/revisión final.
+- Repositorio: `Pablobeas/chess-coach`
+- Rama: `agent/local-game-slice`
+- PR draft: https://github.com/Pablobeas/chess-coach/pull/1
 
-Antes de compactar la conversación, actualizar este archivo con commit, pruebas, PR y pendientes.
+Actualizar este archivo antes de compactar la conversación o cerrar otro slice.

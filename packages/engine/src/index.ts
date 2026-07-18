@@ -18,7 +18,8 @@ export interface EngineLine {
 export type EnginePreset = "beginner" | "intermediate" | "advanced";
 export type EngineBackend =
   "stockfish-wasm" | "stockfish-asmjs" | "deterministic";
-export type EngineAvailability = "loading" | "ready" | "error" | "disposed";
+export type EngineAvailability =
+  "loading" | "ready" | "analyzing" | "error" | "disposed";
 
 export interface EngineStatus {
   readonly backend: EngineBackend;
@@ -204,6 +205,7 @@ export function createUciWorkerEngine(
     backend,
     availability: "loading",
   };
+  let bootPhase: "uci" | "ready" = "uci";
 
   let resolveReady: () => void;
   let rejectReady: (error: Error) => void;
@@ -226,9 +228,14 @@ export function createUciWorkerEngine(
   );
   const onBootMessage = (event: MessageEvent<unknown> | ErrorEvent) => {
     if (!("data" in event)) return;
-    if (event.data === "uciok") {
-      globalThis.clearTimeout(bootTimeout);
+    if (event.data === "uciok" && bootPhase === "uci") {
+      bootPhase = "ready";
       globalThis.clearInterval(bootInterval);
+      worker.postMessage("isready");
+      return;
+    }
+    if (event.data === "readyok" && bootPhase === "ready") {
+      globalThis.clearTimeout(bootTimeout);
       worker.removeEventListener("message", onBootMessage);
       worker.removeEventListener("error", onBootError);
       status = { backend: status.backend, availability: "ready" };
@@ -288,8 +295,29 @@ export function createUciWorkerEngine(
         new Promise<AnalysisResult>((resolve, reject) => {
           let latestDepth = 0;
           let latestNodes = 0;
+          let readyForSearch = false;
+          let searchStarted = false;
+          let infoSeen = false;
           let timeout: ReturnType<typeof globalThis.setTimeout>;
           const lines: EngineLine[] = [];
+          const startSearch = () => {
+            if (readyForSearch) return;
+            readyForSearch = true;
+            worker.postMessage(
+              `setoption name Skill Level value ${preset.skillLevel}`,
+            );
+            worker.postMessage(
+              `setoption name MultiPV value ${request.multiPv}`,
+            );
+            worker.postMessage(`position fen ${request.fen}`);
+            status = { backend: status.backend, availability: "analyzing" };
+            searchStarted = true;
+            const milliseconds =
+              request.limit.kind === "time"
+                ? request.limit.milliseconds
+                : preset.movetimeMilliseconds;
+            worker.postMessage(`go movetime ${milliseconds}`);
+          };
           const cleanup = () => {
             globalThis.clearTimeout(timeout);
             worker.removeEventListener("message", onMessage);
@@ -314,14 +342,21 @@ export function createUciWorkerEngine(
             if (!("data" in event) || typeof event.data !== "string") return;
             const line = event.data.trim();
             if (line === "uciok") return;
+            if (line === "readyok") {
+              startSearch();
+              return;
+            }
             const parsed = parseInfoLine(line, request.perspective);
             if (parsed) {
+              if (!searchStarted) return;
+              infoSeen = true;
               latestDepth = Math.max(latestDepth, parsed.depth);
               latestNodes = Math.max(latestNodes, parsed.nodes);
               lines[parsed.line.rank - 1] = parsed.line;
               return;
             }
             if (!line.startsWith("bestmove ")) return;
+            if (!searchStarted || !infoSeen) return;
             const bestMove = line.split(/\s+/)[1];
             if (!bestMove || generation !== requestGeneration) return;
             const bestLine = lines[0] ?? {
@@ -330,6 +365,7 @@ export function createUciWorkerEngine(
               moves: [bestMove],
             };
             cleanup();
+            status = { backend: status.backend, availability: "ready" };
             resolve({
               id: request.id,
               backend: status.backend,
@@ -359,17 +395,7 @@ export function createUciWorkerEngine(
           worker.addEventListener("error", onError);
           signal?.addEventListener("abort", onAbort, { once: true });
           if (signal?.aborted) return onAbort();
-          worker.postMessage("uci");
-          worker.postMessage(
-            `setoption name Skill Level value ${preset.skillLevel}`,
-          );
-          worker.postMessage(`setoption name MultiPV value ${request.multiPv}`);
-          worker.postMessage(`position fen ${request.fen}`);
-          const milliseconds =
-            request.limit.kind === "time"
-              ? request.limit.milliseconds
-              : preset.movetimeMilliseconds;
-          worker.postMessage(`go movetime ${milliseconds}`);
+          worker.postMessage("isready");
         }),
       (error: unknown) => {
         throw error instanceof Error

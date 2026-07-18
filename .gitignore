@@ -2,6 +2,7 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+.playwright-cli/
 .vite/
 .turbo/
 *.log

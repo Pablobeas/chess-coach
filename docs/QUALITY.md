@@ -1,5 +1,22 @@
 # Calidad y evaluaciones
 
+## Metodología de desarrollo
+
+Usamos desarrollo guiado por funcionalidades con TDD en las capas críticas. Cada
+entrega debe ser una rebanada vertical pequeña que aporte un flujo observable, no
+una colección de capas incompletas.
+
+El ciclo es:
+
+1. Criterios de aceptación de la funcionalidad.
+2. Tests primero para dominio, contratos y riesgos conocidos.
+3. Implementación mínima.
+4. Integración y E2E si el flujo cruza Worker, almacenamiento o UI.
+5. Revisión de rendimiento, accesibilidad y regresiones.
+
+La interfaz puede explorarse visualmente antes de fijar todos sus detalles, pero no
+se considera terminada hasta que sus estados importantes tengan pruebas de regresión.
+
 ## Pirámide de pruebas
 
 - Unitarias: normalización de puntuaciones, UCI, clasificación y pistas.

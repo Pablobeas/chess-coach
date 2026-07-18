@@ -1,33 +1,191 @@
 import { createInitialGame } from "@chess-coach/chess-core";
-import { coachReadiness } from "@chess-coach/coach";
+import { createDeterministicEngine } from "@chess-coach/engine";
+import { useEffect, useMemo, useState } from "react";
+import {
+  boardForFen,
+  boardSquares,
+  createLocalGame,
+  legalDestinations,
+  pieceSymbols,
+  playMove,
+  type Square,
+  undoMove,
+} from "./localGame";
+
+const initialSnapshot = createInitialGame();
+const simulatedEngine = createDeterministicEngine();
+type EngineState = "idle" | "thinking" | "ready" | "error";
+const colorName = (color: "white" | "black") =>
+  color === "white" ? "blancas" : "negras";
 
 export function App() {
-  const game = createInitialGame();
+  const [game, setGame] = useState(() => createLocalGame(initialSnapshot));
+  const [selected, setSelected] = useState<Square>();
+  const [engineState, setEngineState] = useState<EngineState>("idle");
+  const [engineMessage, setEngineMessage] = useState(
+    "El motor simulado está disponible.",
+  );
+  const board = useMemo(() => boardForFen(game.fen), [game.fen]);
+  const destinations = useMemo(
+    () => (selected ? legalDestinations(game, selected) : []),
+    [game, selected],
+  );
+
+  useEffect(() => {
+    if (game.history.length === 0) return;
+    const controller = new AbortController();
+    setEngineState("thinking");
+    setEngineMessage("El motor simulado está analizando la posición.");
+    void simulatedEngine
+      .analyze(
+        {
+          id: `analysis-${game.history.length}`,
+          fen: game.fen,
+          perspective: game.turn,
+          multiPv: 1,
+          limit: { kind: "time", milliseconds: 500 },
+        },
+        controller.signal,
+      )
+      .then((result) => {
+        setEngineState("ready");
+        setEngineMessage(
+          `Análisis listo: profundidad ${result.depth}, ${result.nodes.toLocaleString("es-ES")} nodos.`,
+        );
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        setEngineState("error");
+        setEngineMessage(
+          "No se pudo analizar la posición. Puedes seguir jugando.",
+        );
+      });
+    return () => controller.abort();
+  }, [game.fen, game.history.length]);
+
+  const selectSquare = (square: Square) => {
+    if (engineState === "thinking") return;
+    if (selected && destinations.includes(square)) {
+      setGame((current) => playMove(current, selected, square));
+      setSelected(undefined);
+      return;
+    }
+    setSelected(board.get(square)?.color === game.turn ? square : undefined);
+  };
+  const reset = () => {
+    setGame(createLocalGame(initialSnapshot));
+    setSelected(undefined);
+    setEngineState("idle");
+    setEngineMessage("El motor simulado está disponible.");
+  };
 
   return (
     <main className="shell">
-      <section className="hero" aria-labelledby="page-title">
-        <p className="eyebrow">Entrenamiento local · Sin cuenta</p>
-        <h1 id="page-title">Piensa la posición. Entiende la jugada.</h1>
-        <p className="lede">
-          La base del proyecto está lista. El siguiente hito conectará un motor
-          local para jugar, analizar y explicar cada decisión.
-        </p>
-        <div className="status-grid" aria-label="Estado del proyecto">
-          <article>
-            <span>Posición inicial</span>
-            <strong>
-              {game.turn === "white" ? "Juegan blancas" : "Juegan negras"}
-            </strong>
-          </article>
-          <article>
-            <span>Entrenador</span>
-            <strong>{coachReadiness}</strong>
-          </article>
-          <article>
-            <span>Privacidad</span>
-            <strong>Local por defecto</strong>
-          </article>
+      <section className="game" aria-labelledby="page-title">
+        <header className="game-header">
+          <div>
+            <p className="eyebrow">Partida local · Sin cuenta</p>
+            <h1 id="page-title">Tablero de práctica</h1>
+          </div>
+          <p className="turn" aria-live="polite">
+            Turno de {colorName(game.turn)}
+          </p>
+        </header>
+        <div className="game-layout">
+          <section className="board-panel" aria-label="Tablero de ajedrez">
+            <p className="board-help" id="board-help">
+              Selecciona una pieza y después una casilla marcada para moverla.
+            </p>
+            <div
+              className="board"
+              role="grid"
+              aria-describedby="board-help"
+              aria-label={`Tablero: turno de ${colorName(game.turn)}`}
+            >
+              {boardSquares.map((square) => {
+                const piece = board.get(square);
+                const file = square.charCodeAt(0) - 97;
+                const rank = Number(square[1]);
+                const isSelected = selected === square;
+                const isDestination = destinations.includes(square);
+                return (
+                  <button
+                    key={square}
+                    type="button"
+                    role="gridcell"
+                    className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}`}
+                    onClick={() => selectSquare(square)}
+                    aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}`}
+                    aria-pressed={isSelected}
+                    disabled={engineState === "thinking"}
+                  >
+                    {piece ? (
+                      <span aria-hidden="true">
+                        {pieceSymbols[piece.color][piece.type]}
+                      </span>
+                    ) : null}
+                    {square[0] === "a" ? (
+                      <small className="rank">{square[1]}</small>
+                    ) : null}
+                    {square[1] === "1" ? (
+                      <small className="file">{square[0]}</small>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <aside className="side-panel" aria-label="Controles y movimientos">
+            <section className="engine-status" aria-live="polite">
+              <p className="label">Motor local</p>
+              <strong data-state={engineState}>
+                {engineState === "thinking"
+                  ? "Analizando"
+                  : engineState === "ready"
+                    ? "Listo"
+                    : engineState === "error"
+                      ? "No disponible"
+                      : "En espera"}
+              </strong>
+              <p>{engineMessage}</p>
+            </section>
+            <div className="controls">
+              <button
+                type="button"
+                onClick={() => {
+                  setGame((current) => undoMove(current));
+                  setSelected(undefined);
+                }}
+                disabled={
+                  game.history.length === 0 || engineState === "thinking"
+                }
+              >
+                Deshacer
+              </button>
+              <button type="button" className="secondary" onClick={reset}>
+                Reiniciar
+              </button>
+            </div>
+            <section className="moves" aria-labelledby="moves-title">
+              <div className="moves-heading">
+                <h2 id="moves-title">Movimientos</h2>
+                <span>{game.history.length}</span>
+              </div>
+              {game.history.length ? (
+                <ol>
+                  {game.history.map((move, index) => (
+                    <li key={move.uci}>
+                      <span>{index + 1}.</span>
+                      {move.san}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p>Aún no hay movimientos.</p>
+              )}
+            </section>
+          </aside>
         </div>
       </section>
     </main>

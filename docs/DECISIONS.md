@@ -48,3 +48,16 @@ Ollama queda aplazado, no como dependencia prevista. Solo se reconsiderará medi
 una ADR nueva si una evaluación demuestra una mejora pedagógica concreta que no pueda
 lograrse con reglas, y siempre como opción desactivada por defecto con fallback local
 determinista.
+
+## ADR-007 — Desarrollo vertical con TDD selectivo
+
+**Estado:** aceptada.
+
+Las entregas se organizan como funcionalidades verticales completas. Dentro de cada
+funcionalidad se aplica TDD a reglas de ajedrez, contratos UCI, concurrencia,
+cancelación, métricas, persistencia y otros comportamientos deterministas. La UI y
+el diseño pueden iterarse exploratoriamente, pero deben acabar con criterios de
+aceptación y pruebas de regresión apropiadas.
+
+Esta combinación mantiene el foco en valor usable sin sacrificar confianza en las
+partes donde un error sería difícil de detectar manualmente.

@@ -125,12 +125,21 @@ engine -> chess-core
 
 ## Flujo de implementación
 
+El proyecto combina desarrollo guiado por funcionalidades con TDD:
+
 1. Lee los documentos relevantes y el `AGENTS.md` más cercano al archivo.
-2. Define criterios de aceptación observables.
-3. Implementa el cambio más pequeño que complete esos criterios.
-4. Añade o actualiza tests; para lógica de ajedrez incluye FEN/PGN reproducibles.
-5. Ejecuta primero las comprobaciones del paquete afectado y después las globales.
-6. Revisa el diff para detectar cambios no intencionales.
+2. Define una funcionalidad vertical y criterios de aceptación observables.
+3. Escribe primero tests para dominio, contratos y casos de riesgo.
+4. Implementa el cambio mínimo que haga pasar esos tests.
+5. Completa la funcionalidad de extremo a extremo, incluyendo integración y E2E
+   cuando afecte a la interfaz o al flujo de sesión.
+6. Ejecuta primero las comprobaciones del paquete afectado y después las globales.
+7. Revisa el diff, el rendimiento, la accesibilidad y los cambios no intencionales.
+
+TDD es obligatorio para reglas de ajedrez, contratos UCI, cancelación, métricas,
+clasificación y persistencia. Para estilos o exploración visual se pueden crear
+primero criterios de aceptación y una implementación manual, pero la funcionalidad
+terminada debe conservar pruebas de regresión apropiadas.
 
 ## Comandos
 

@@ -40,6 +40,11 @@ import {
 
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
+interface NavigationSnapshot {
+  readonly session: GameSession;
+  readonly annotations: readonly MoveQualityAnnotation[];
+  readonly feedback?: CoachFeedback;
+}
 const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
 const backendLabel = (backend: EngineBackend) =>
@@ -180,6 +185,7 @@ export function App() {
   const [feedback, setFeedback] = useState<CoachFeedback | undefined>(
     () => recovered?.feedback,
   );
+  const [redoStack, setRedoStack] = useState<readonly NavigationSnapshot[]>([]);
   const [selected, setSelected] = useState<Square>();
   const [engineState, setEngineState] = useState<EngineState>("idle");
   const [paused, setPaused] = useState(false);
@@ -367,6 +373,7 @@ export function App() {
           setGame(createLocalGame(initialSnapshot));
           setMoveAnnotations([]);
           setFeedback(undefined);
+          setRedoStack([]);
           setHasSavedGame(false);
           setStarted(true);
         }}
@@ -385,6 +392,7 @@ export function App() {
     if (selected && destinations.includes(square)) {
       const annotationRequest = ++annotationGeneration.current;
       setFeedback(undefined);
+      setRedoStack([]);
       setGame((current) => {
         const next = playMove(current, selected, square);
         const analysisEngine = (coachEngineRef.current ??=
@@ -447,6 +455,7 @@ export function App() {
     annotationGeneration.current += 1;
     setGame(createLocalGame(initialSnapshot));
     setMoveAnnotations([]);
+    setRedoStack([]);
     setSelected(undefined);
     setPaused(false);
     setSessionError(undefined);
@@ -456,21 +465,59 @@ export function App() {
   };
 
   const undo = () => {
+    if (game.history.length === 0) return;
     generation.current += 1;
     annotationGeneration.current += 1;
     const restored = undoMove(game);
-    setGame(restored);
-    setMoveAnnotations((annotations) =>
-      annotations.filter(
-        (annotation) => annotation.historyIndex < restored.history.length,
-      ),
+    const remainingAnnotations = moveAnnotations.filter(
+      (annotation) => annotation.historyIndex < restored.history.length,
     );
+    const previousFeedback =
+      feedback &&
+      remainingAnnotations.some(
+        (annotation) => annotation.uci === feedback.evidence.playedUci,
+      )
+        ? feedback
+        : undefined;
+    setRedoStack((stack) => [
+      ...stack,
+      {
+        session: game,
+        annotations: moveAnnotations,
+        ...(feedback ? { feedback } : {}),
+      },
+    ]);
+    setGame(restored);
+    setMoveAnnotations(remainingAnnotations);
+    setFeedback(previousFeedback);
     setSelected(undefined);
-    setPaused(false);
+    setPaused(true);
     setSessionError(undefined);
     setFeedback(undefined);
     setEngineState("idle");
     setEngineMessage("El motor local está disponible.");
+  };
+
+  const redo = () => {
+    const next = redoStack.at(-1);
+    if (!next) return;
+    generation.current += 1;
+    annotationGeneration.current += 1;
+    const remaining = redoStack.slice(0, -1);
+    setRedoStack(remaining);
+    setGame(next.session);
+    setMoveAnnotations(next.annotations);
+    setFeedback(next.feedback);
+    setSelected(undefined);
+    setPaused(remaining.length > 0);
+    setSessionError(undefined);
+    setEngineState("idle");
+    setEngineMessage("El motor local está disponible.");
+  };
+
+  const togglePaused = () => {
+    if (paused && redoStack.length > 0) setRedoStack([]);
+    setPaused((value) => !value);
   };
 
   const abandon = () => {
@@ -484,6 +531,7 @@ export function App() {
     setPaused(false);
     setMoveAnnotations([]);
     setFeedback(undefined);
+    setRedoStack([]);
   };
 
   const downloadPgn = () => {
@@ -505,6 +553,7 @@ export function App() {
       setGame(createLocalGame(imported));
       annotationGeneration.current += 1;
       setMoveAnnotations([]);
+      setRedoStack([]);
       setSelected(undefined);
       setPaused(false);
       setSessionError(undefined);
@@ -663,20 +712,38 @@ export function App() {
               <p>{engineMessage}</p>
             </section>
             <div className="controls">
-              <button
-                type="button"
-                onClick={undo}
-                disabled={game.history.length === 0}
+              <div
+                className="history-controls"
+                aria-label="Navegación de jugadas"
               >
-                Deshacer
-              </button>
+                <button
+                  type="button"
+                  className="history-arrow"
+                  onClick={undo}
+                  disabled={game.history.length === 0}
+                  aria-label="Retroceder una jugada"
+                  title="Retroceder una jugada"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  className="history-arrow"
+                  onClick={redo}
+                  disabled={redoStack.length === 0}
+                  aria-label="Avanzar una jugada"
+                  title="Avanzar una jugada"
+                >
+                  →
+                </button>
+              </div>
               <button type="button" className="secondary" onClick={reset}>
                 Reiniciar
               </button>
               <button
                 type="button"
                 className="secondary"
-                onClick={() => setPaused((value) => !value)}
+                onClick={togglePaused}
                 disabled={engineState === "thinking"}
               >
                 {paused ? "Reanudar" : "Pausar"}

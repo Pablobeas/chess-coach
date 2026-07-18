@@ -442,6 +442,12 @@ h1 {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+.history-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
 .controls button {
   min-height: 46px;
   border: 1px solid #bed08b;
@@ -450,6 +456,16 @@ h1 {
   color: #18221b;
   cursor: pointer;
   font-weight: 800;
+}
+.controls .history-arrow {
+  min-height: 50px;
+  font-size: 1.8rem;
+  line-height: 1;
+}
+.controls .history-arrow:disabled {
+  border-color: #405246;
+  background: #26352c;
+  color: #78897d;
 }
 .controls .secondary {
   border-color: #526b58;

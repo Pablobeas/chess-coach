@@ -23,6 +23,7 @@
 - El panel muestra SAN, recorrido `origen → destino`, autor y una nota accesible de la última jugada.
 - El rastro visual usa una flecha SVG azul para el jugador y naranja-roja para Stockfish; ya no depende del resaltado amarillo.
 - Lanzador Windows disponible como `play` y `play.cmd`: inicia el servidor local, espera a que esté listo y abre `http://localhost:5173`.
+- Navegación de jugadas con flechas atrás/adelante: rehacer restaura sesión, anotaciones y feedback; adelante queda deshabilitado en la última jugada y retroceder pausa la partida para revisar.
 - El tablero limita su tamaño por ancho y por altura (`dvh`), sin overflow horizontal en móvil.
 - Validado en navegador a 390×844 y 1440×700; el tablero cabe horizontalmente y se reduce en ventanas de poca altura.
 

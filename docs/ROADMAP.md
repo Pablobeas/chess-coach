@@ -13,6 +13,7 @@
 - [x] Adaptador UCI real dentro de Web Worker validado en navegador.
 - [x] Presets de fuerza, cancelación, fallback y protección contra resultados obsoletos.
 - [x] Deshacer, pausar, abandonar, reiniciar y nueva partida.
+- [x] Piezas SVG bicolor y bandejas de capturas.
 - [ ] Reloj opcional.
 
 ## Fase 2 — Entrenador
@@ -20,6 +21,7 @@
 - [x] Contrato de evidencia antes/después y pérdida esperada.
 - [x] Clasificación determinista con tests.
 - [ ] Evidencia real Stockfish y WDL normalizado en la UI.
+- [x] Indicadores visuales de calidad asociados a las jugadas del usuario.
 - [ ] Detectores tácticos y estratégicos verificables completos.
 - [ ] Pistas progresivas 1/2/3, flechas, evaluación y amenazas.
 

@@ -8,6 +8,14 @@
 - El motor determinista queda restringido a tests y desarrollo. No se usa como fallback de producción.
 - ASM.js continúa como fallback local mediante `launcher.js`.
 
+### Slice visual del tablero
+
+- Piezas SVG inline bicolor: relleno marfil/oscuro y contornos de alto contraste.
+- Bandejas `Capturadas por ti` y `Capturadas por Stockfish`, calculadas desde el historial legal, incluyendo captura al paso y promoción.
+- Insignias visuales `★`, `✓`, `!`, `?` y `‼` para las calidades de las jugadas del usuario; la última aparece también en la casilla de destino y todas se conservan en el historial.
+- Persistencia local v2 con migración desde v1, anotaciones validadas por índice/UCI y último feedback recuperable tras recargar.
+- Validado en navegador: SVG, insignia `✓`, bandejas vacías, feedback y recuperación de partida/anotación.
+
 ## Evidencia reproducible
 
 - `apps/web/public/stockfish-smoke.html` ejecuta el smoke sin React, sin service worker y sin cliente de engine.

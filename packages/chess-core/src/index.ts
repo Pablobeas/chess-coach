@@ -2,6 +2,7 @@ import { Chess, type PieceSymbol } from "chess.js";
 
 export type PlayerColor = "white" | "black";
 export type PromotionPiece = "q" | "r" | "b" | "n";
+export type PieceType = PieceSymbol;
 
 export interface MoveInput {
   readonly from: string;
@@ -12,6 +13,15 @@ export interface MoveInput {
 export interface MoveRecord extends MoveInput {
   readonly san: string;
   readonly uci: string;
+}
+
+export interface CaptureRecord {
+  readonly historyIndex: number;
+  readonly capturer: PlayerColor;
+  readonly piece: {
+    readonly color: PlayerColor;
+    readonly type: PieceType;
+  };
 }
 
 export interface GameSnapshot {
@@ -203,4 +213,31 @@ export function listLegalMoves(fen: string): readonly MoveRecord[] {
   return Object.freeze(
     game.moves({ verbose: true }).map((move) => toMoveRecord(move)),
   );
+}
+
+export function listCaptures(session: GameSession): readonly CaptureRecord[] {
+  const game = createChess(session.initialFen);
+  const captures: CaptureRecord[] = [];
+
+  session.history.forEach((move, historyIndex) => {
+    const capturer = toPlayerColor(game.turn());
+    const appliedMove = game.move({
+      from: move.from,
+      to: move.to,
+      ...(move.promotion === undefined ? {} : { promotion: move.promotion }),
+    });
+
+    if (appliedMove.captured !== undefined) {
+      captures.push({
+        historyIndex,
+        capturer,
+        piece: {
+          color: capturer === "white" ? "black" : "white",
+          type: appliedMove.captured,
+        },
+      });
+    }
+  });
+
+  return Object.freeze(captures);
 }

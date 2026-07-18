@@ -1,25 +1,28 @@
 import {
   createInitialGame,
   loadPgn,
+  listCaptures,
   restoreSession,
   type GameSession,
+  type PieceType,
   type PlayerColor,
 } from "@chess-coach/chess-core";
 import type { ChessEngine, EngineBackend } from "@chess-coach/engine";
 import {
   analyzeMove,
   hintForLevel,
+  type MoveLabel,
   type CoachFeedback,
 } from "@chess-coach/coach";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GameSetup } from "./GameSetup";
 import { createBrowserStockfishEngine } from "./engineClient";
+import { PieceIcon } from "./PieceIcon";
 import {
   boardForFen,
   boardRows,
   createLocalGame,
   legalDestinations,
-  pieceSymbols,
   playMove,
   playUciMove,
   type Square,
@@ -31,6 +34,7 @@ import {
   exportPgn,
   loadStoredGame,
   saveStoredGame,
+  type MoveQualityAnnotation,
   type GameSettings,
 } from "./persistence";
 
@@ -45,9 +49,98 @@ const backendLabel = (backend: EngineBackend) =>
       ? "Stockfish ASM.js · modo compatible"
       : "Motor determinista";
 
+const qualityMeta: Record<
+  MoveLabel,
+  { readonly icon: string; readonly label: string; readonly className: string }
+> = {
+  excellent: { icon: "★", label: "Excelente", className: "excellent" },
+  good: { icon: "✓", label: "Buena", className: "good" },
+  inaccuracy: { icon: "!", label: "Imprecisión", className: "inaccuracy" },
+  mistake: { icon: "?", label: "Error", className: "mistake" },
+  blunder: { icon: "‼", label: "Error grave", className: "blunder" },
+};
+
+const capturedTypeOrder = ["q", "r", "b", "n", "p", "k"] as const;
+const capturedTypeNames: Record<PieceType, string> = {
+  q: "dama",
+  r: "torre",
+  b: "alfil",
+  n: "caballo",
+  p: "peón",
+  k: "rey",
+};
+const capturedTypePlural: Record<PieceType, string> = {
+  q: "damas",
+  r: "torres",
+  b: "alfiles",
+  n: "caballos",
+  p: "peones",
+  k: "reyes",
+};
+
+function QualityBadge({ label }: { readonly label: MoveLabel }) {
+  const meta = qualityMeta[label];
+  return (
+    <span
+      className={`quality-badge quality-${meta.className}`}
+      title={meta.label}
+      aria-label={`Calidad de la jugada: ${meta.label}`}
+    >
+      <span aria-hidden="true">{meta.icon}</span>
+      <span className="visually-hidden">{meta.label}</span>
+    </span>
+  );
+}
+
+function CapturedTray({
+  capturer,
+  captured,
+  label,
+}: {
+  readonly capturer: PlayerColor;
+  readonly captured: readonly {
+    readonly color: PlayerColor;
+    readonly type: PieceType;
+  }[];
+  readonly label: string;
+}) {
+  return (
+    <section className="captured-tray" aria-label={label}>
+      <h2>{label}</h2>
+      <div className="captured-pieces">
+        {captured.length === 0 ? (
+          <span className="captured-empty">Ninguna</span>
+        ) : (
+          capturedTypeOrder.flatMap((type) => {
+            const pieces = captured.filter((piece) => piece.type === type);
+            if (pieces.length === 0) return [];
+            const piece = pieces[0];
+            if (!piece) return [];
+            return [
+              <span
+                role="img"
+                className="captured-group"
+                key={`${capturer}-${type}`}
+                aria-label={`${pieces.length} ${pieces.length === 1 ? capturedTypeNames[type] : capturedTypePlural[type]} ${piece.color === "white" ? "blancas" : "negras"} capturadas`}
+              >
+                <PieceIcon color={piece.color} type={piece.type} />
+                {pieces.length > 1 ? (
+                  <span aria-hidden="true">×{pieces.length}</span>
+                ) : null}
+              </span>,
+            ];
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
 function getRecoveredState(): {
   readonly session: GameSession;
   readonly settings: GameSettings;
+  readonly annotations: readonly MoveQualityAnnotation[];
+  readonly feedback?: CoachFeedback;
 } | null {
   if (typeof window === "undefined") return null;
   const stored = loadStoredGame(window.localStorage);
@@ -56,6 +149,10 @@ function getRecoveredState(): {
     return {
       session: restoreSession(stored.session),
       settings: stored.settings,
+      annotations: stored.annotations,
+      ...(stored.lastFeedback === undefined
+        ? {}
+        : { feedback: stored.lastFeedback }),
     };
   } catch {
     clearStoredGame(window.localStorage);
@@ -77,15 +174,21 @@ export function App() {
   const [game, setGame] = useState(() =>
     createLocalGame(recovered?.session ?? initialSnapshot),
   );
+  const [moveAnnotations, setMoveAnnotations] = useState<
+    readonly MoveQualityAnnotation[]
+  >(() => recovered?.annotations ?? []);
+  const [feedback, setFeedback] = useState<CoachFeedback | undefined>(
+    () => recovered?.feedback,
+  );
   const [selected, setSelected] = useState<Square>();
   const [engineState, setEngineState] = useState<EngineState>("idle");
   const [paused, setPaused] = useState(false);
   const [sessionError, setSessionError] = useState<string>();
-  const [feedback, setFeedback] = useState<CoachFeedback>();
   const [engineMessage, setEngineMessage] = useState(
     "El motor local está disponible.",
   );
   const generation = useRef(0);
+  const annotationGeneration = useRef(0);
   const engineRef = useRef<ChessEngine | null>(null);
   const coachEngineRef = useRef<ChessEngine | null>(null);
   const [engineBackend, setEngineBackend] = useState<EngineBackend>();
@@ -93,6 +196,35 @@ export function App() {
     settings.playerColor === "random" ? "white" : settings.playerColor;
   const engineColor: PlayerColor = playerColor === "white" ? "black" : "white";
   const board = useMemo(() => boardForFen(game.fen), [game.fen]);
+  const captures = useMemo(() => listCaptures(game), [game]);
+  const capturedByColor = useMemo(
+    () => ({
+      white: captures.filter((capture) => capture.capturer === "white"),
+      black: captures.filter((capture) => capture.capturer === "black"),
+    }),
+    [captures],
+  );
+  const latestAnnotation = moveAnnotations.at(-1);
+  const latestAnnotationIsCurrent =
+    latestAnnotation !== undefined &&
+    game.history[latestAnnotation.historyIndex]?.uci === latestAnnotation.uci;
+  const qualityBySquare = useMemo(
+    () =>
+      latestAnnotationIsCurrent && latestAnnotation
+        ? new Map([[latestAnnotation.uci.slice(2, 4), latestAnnotation]])
+        : new Map<string, MoveQualityAnnotation>(),
+    [latestAnnotation, latestAnnotationIsCurrent],
+  );
+  const annotationByHistoryIndex = useMemo(
+    () =>
+      new Map(
+        moveAnnotations.map((annotation) => [
+          annotation.historyIndex,
+          annotation,
+        ]),
+      ),
+    [moveAnnotations],
+  );
   const destinations = useMemo(
     () => (selected ? legalDestinations(game, selected) : []),
     [game, selected],
@@ -100,8 +232,14 @@ export function App() {
 
   useEffect(() => {
     if (!started || typeof window === "undefined") return;
-    saveStoredGame(game, settings, window.localStorage);
-  }, [game, settings, started]);
+    saveStoredGame(
+      game,
+      settings,
+      window.localStorage,
+      moveAnnotations,
+      feedback,
+    );
+  }, [feedback, game, moveAnnotations, settings, started]);
 
   useEffect(
     () => () => {
@@ -211,6 +349,8 @@ export function App() {
           clearStoredGame();
           setSettings(resolvedSettings);
           setGame(createLocalGame(initialSnapshot));
+          setMoveAnnotations([]);
+          setFeedback(undefined);
           setHasSavedGame(false);
           setStarted(true);
         }}
@@ -227,6 +367,8 @@ export function App() {
     if (paused || engineState === "thinking" || game.turn !== playerColor)
       return;
     if (selected && destinations.includes(square)) {
+      const annotationRequest = ++annotationGeneration.current;
+      setFeedback(undefined);
       setGame((current) => {
         const next = playMove(current, selected, square);
         const analysisEngine = (coachEngineRef.current ??=
@@ -249,7 +391,25 @@ export function App() {
           const beforeLine = beforeResult.lines[0];
           const afterLine = afterResult.lines[0];
           if (!beforeLine || !afterLine) return;
-          setFeedback(analyzeMove(current, next, beforeLine, afterLine));
+          const nextFeedback = analyzeMove(
+            current,
+            next,
+            beforeLine,
+            afterLine,
+          );
+          if (annotationGeneration.current !== annotationRequest) return;
+          setFeedback(nextFeedback);
+          setMoveAnnotations((annotations) => [
+            ...annotations.filter(
+              (annotation) =>
+                annotation.historyIndex !== next.history.length - 1,
+            ),
+            {
+              historyIndex: next.history.length - 1,
+              uci: next.history.at(-1)?.uci ?? "",
+              label: nextFeedback.label,
+            },
+          ]);
           setEngineBackend(analysisEngine.getStatus().backend);
         })().catch((error: unknown) => {
           setSessionError(
@@ -268,7 +428,9 @@ export function App() {
 
   const reset = () => {
     generation.current += 1;
+    annotationGeneration.current += 1;
     setGame(createLocalGame(initialSnapshot));
+    setMoveAnnotations([]);
     setSelected(undefined);
     setPaused(false);
     setSessionError(undefined);
@@ -279,7 +441,14 @@ export function App() {
 
   const undo = () => {
     generation.current += 1;
-    setGame((current) => undoMove(current));
+    annotationGeneration.current += 1;
+    const restored = undoMove(game);
+    setGame(restored);
+    setMoveAnnotations((annotations) =>
+      annotations.filter(
+        (annotation) => annotation.historyIndex < restored.history.length,
+      ),
+    );
     setSelected(undefined);
     setPaused(false);
     setSessionError(undefined);
@@ -292,10 +461,13 @@ export function App() {
     if (!window.confirm("¿Abandonar esta partida y borrar su guardado local?"))
       return;
     generation.current += 1;
+    annotationGeneration.current += 1;
     clearStoredGame();
     setHasSavedGame(false);
     setStarted(false);
     setPaused(false);
+    setMoveAnnotations([]);
+    setFeedback(undefined);
   };
 
   const downloadPgn = () => {
@@ -315,6 +487,8 @@ export function App() {
       const imported = loadPgn(await file.text());
       generation.current += 1;
       setGame(createLocalGame(imported));
+      annotationGeneration.current += 1;
+      setMoveAnnotations([]);
       setSelected(undefined);
       setPaused(false);
       setSessionError(undefined);
@@ -358,13 +532,14 @@ export function App() {
                     const rank = Number(square[1]);
                     const isSelected = selected === square;
                     const isDestination = destinations.includes(square);
+                    const squareQuality = qualityBySquare.get(square);
                     return (
                       <button
                         key={square}
                         type="button"
                         className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}`}
                         onClick={() => selectSquare(square)}
-                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}`}
+                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
                         aria-pressed={isSelected}
                         disabled={
                           paused ||
@@ -373,9 +548,10 @@ export function App() {
                         }
                       >
                         {piece ? (
-                          <span aria-hidden="true">
-                            {pieceSymbols[piece.color][piece.type]}
-                          </span>
+                          <PieceIcon color={piece.color} type={piece.type} />
+                        ) : null}
+                        {squareQuality ? (
+                          <QualityBadge label={squareQuality.label} />
                         ) : null}
                         {square[0] === "a" ? (
                           <small className="rank">{square[1]}</small>
@@ -388,6 +564,22 @@ export function App() {
                   })}
                 </div>
               ))}
+            </div>
+            <div className="captured-trays">
+              <CapturedTray
+                capturer={playerColor}
+                captured={capturedByColor[playerColor].map(
+                  (capture) => capture.piece,
+                )}
+                label="Capturadas por ti"
+              />
+              <CapturedTray
+                capturer={engineColor}
+                captured={capturedByColor[engineColor].map(
+                  (capture) => capture.piece,
+                )}
+                label="Capturadas por Stockfish"
+              />
             </div>
           </section>
           <aside className="side-panel" aria-label="Controles y movimientos">
@@ -482,7 +674,14 @@ export function App() {
                   {game.history.map((move, index) => (
                     <li key={`${move.uci}-${index}`}>
                       <span>{index + 1}.</span>
-                      {move.san}
+                      <span className="move-entry">
+                        {move.san}
+                        {annotationByHistoryIndex.get(index) ? (
+                          <QualityBadge
+                            label={annotationByHistoryIndex.get(index)!.label}
+                          />
+                        ) : null}
+                      </span>
                     </li>
                   ))}
                 </ol>

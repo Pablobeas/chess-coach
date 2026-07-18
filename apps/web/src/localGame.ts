@@ -4,11 +4,11 @@ import {
   undoLastMove,
   type GameSession,
   type PlayerColor,
+  type PieceType,
 } from "@chess-coach/chess-core";
 
 export type Square =
   `${"a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"}${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
-type PieceType = "p" | "n" | "b" | "r" | "q" | "k";
 export type Piece = { readonly color: PlayerColor; readonly type: PieceType };
 
 const files = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
@@ -47,10 +47,6 @@ export const boardSquares = ranks.flatMap((rank) =>
 export const boardRows = ranks.map((rank) =>
   files.map((file) => `${file}${rank}` as Square),
 );
-export const pieceSymbols: Record<PlayerColor, Record<PieceType, string>> = {
-  white: { p: "♙", n: "♘", b: "♗", r: "♖", q: "♕", k: "♔" },
-  black: { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" },
-};
 export const createLocalGame = (game: GameSession) => game;
 export const legalDestinations = (game: GameSession, from: Square) =>
   listLegalMoves(game.fen)

@@ -3,6 +3,7 @@ import {
   applyMove,
   createInitialGame,
   loadPgn,
+  listCaptures,
   loadPosition,
   restoreSession,
   undoLastMove,
@@ -66,5 +67,34 @@ describe("chess-core", () => {
     expect(restoreSession(JSON.parse(JSON.stringify(imported)))).toEqual(
       imported,
     );
+  });
+
+  it("lists normal, en passant and promotion captures", () => {
+    const normal = applyMove(loadPosition("8/8/8/3p4/4P3/8/8/4K2k w - - 0 1"), {
+      from: "e4",
+      to: "d5",
+    });
+    expect(listCaptures(normal)).toEqual([
+      {
+        historyIndex: 0,
+        capturer: "white",
+        piece: { color: "black", type: "p" },
+      },
+    ]);
+
+    const enPassant = applyMove(
+      applyMove(loadPosition("8/8/8/8/3p4/8/4P3/4K2k w - - 0 1"), {
+        from: "e2",
+        to: "e4",
+      }),
+      { from: "d4", to: "e3" },
+    );
+    expect(listCaptures(enPassant)[0]?.piece.type).toBe("p");
+
+    const promotion = applyMove(
+      loadPosition("3rk3/4P3/8/8/8/8/8/4K3 w - - 0 1"),
+      { from: "e7", to: "d8", promotion: "q" },
+    );
+    expect(listCaptures(promotion)[0]?.piece.type).toBe("r");
   });
 });

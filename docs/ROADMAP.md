@@ -23,17 +23,19 @@
 
 - [x] Contrato de evidencia antes/después y pérdida esperada.
 - [x] Clasificación determinista con tests.
-- [ ] Evidencia real Stockfish y WDL normalizado en la UI.
+- [x] Evidencia Stockfish y evaluación normalizada para jugadas del usuario.
+- [ ] Extender la evaluación histórica a jugadas de Maia sin saturar la cola serial.
 - [x] Indicadores visuales de calidad asociados a las jugadas del usuario.
-- [ ] Detectores tácticos y estratégicos verificables completos.
-- [ ] Pistas progresivas 1/2/3, flechas, evaluación y amenazas.
+- [x] Primera colección de detectores tácticos y estratégicos verificables.
+- [x] Voz editorial determinista y feedback recuperable desde el historial.
+- [ ] Ampliar pistas progresivas 1/2/3, flechas y amenazas visuales.
 
 ## Fase 3 — Sesión y revisión
 
 - [x] Persistencia local versionada y recuperación.
 - [x] Exportación/importación PGN.
 - [ ] Resumen final y momentos críticos.
-- [x] Configuración de accesibilidad, sonido y nivel de ayuda.
+- [x] Configuración de accesibilidad y nivel de ayuda.
 
 ## Fase 4 — Preparación pública
 

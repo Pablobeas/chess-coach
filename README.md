@@ -2,8 +2,8 @@
 
 Web/PWA de entrenamiento de ajedrez que combina una partida contra un motor local
 con explicaciones, pistas progresivas y feedback en tiempo real. El proyecto está
-en su fase de cimentación: la estructura multiagente y los contratos iniciales ya
-están definidos; la integración real de Stockfish/WASM es el siguiente hito.
+incluye Stockfish local para el análisis pedagógico y Maia-3 5M como oponente
+humano-realista en el modo de escritorio local.
 
 El producto no necesita un LLM: el feedback se construirá localmente mediante
 Stockfish, detectores de motivos y plantillas pedagógicas. Ollama y los modelos
@@ -11,13 +11,34 @@ remotos quedan fuera del MVP.
 
 ## Inicio rápido
 
-Requisitos: Node.js 22–24, pnpm 11 y Codex CLI 0.144.6 o posterior para usar
-los modelos GPT-5.6 configurados.
+Requisitos de desarrollo: Node.js 22–24 y pnpm 11. Para jugar contra Maia-3 se
+necesita además Python 3.10–3.12 y Git.
 
 ```powershell
 pnpm install
-pnpm dev
+.\play.ps1
 ```
+
+`pnpm dev` inicia únicamente la interfaz Vite para desarrollo. Para jugar una partida
+completa debe usarse `play.ps1` (o el comando global `play` descrito debajo), que prepara
+y arranca también el companion local de Maia-3 antes de abrir la web.
+
+En esta máquina también está instalado el comando global `play`. Puede ejecutarse
+desde cualquier carpeta de PowerShell:
+
+```powershell
+play
+```
+
+`play` prepara el companion local de Maia-3, cierra únicamente procesos anteriores
+de este proyecto, fuerza una reconstrucción de desarrollo, inicia la última versión
+en `http://127.0.0.1:5173` y abre el navegador automáticamente. La primera ejecución
+instala Maia-3 y PyTorch en `.runtime/maia3` (aprox. 750 MB) y descarga el checkpoint
+5M (aprox. 21 MB); las siguientes partidas funcionan sin conexión. Si un puerto
+pertenece a otro programa, el lanzador se detiene en lugar de cerrar un proceso ajeno.
+
+El Elo configurado para Maia-3 está calibrado sobre partidas Lichess Blitz. Es una
+referencia de estilo de juego, no una equivalencia directa con Elo FIDE o Chess.com.
 
 Comprobación completa:
 
@@ -51,7 +72,7 @@ define cuándo corresponde usar cada una.
 
 ## Estado del producto
 
-- Base React/Vite y paquetes de dominio creados.
-- Contratos iniciales de motor y entrenador definidos.
-- Tests unitarios iniciales incluidos.
-- Stockfish/WASM, tablero interactivo y persistencia: pendientes.
+- Tablero React/Vite interactivo, accesible y persistente.
+- Stockfish WASM local como fuente de análisis pedagógico.
+- Maia-3 5M local como oponente mediante un companion UCI separado.
+- Tests unitarios de dominio, motor, persistencia e interacción incluidos.

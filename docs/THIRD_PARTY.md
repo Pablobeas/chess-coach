@@ -26,6 +26,25 @@ this single-threaded browser entrypoint.
 compatibility path. It does not contain engine code and is covered by the
 project license.
 
+## Maia-3 5M local companion (not redistributed)
+
+- Source: https://github.com/CSSLab/maia3
+- Fixed source commit: `1e13597c42d4858b7cfd7cfdae01e297263364b2`
+- Source license: AGPL-3.0
+- Checkpoint repository: https://huggingface.co/UofTCSSLab/Maia3-5M
+- Verified model revision: `b6559de2398d7140b985f28fd2c19fb5e47ddabe`
+- Checkpoint file: `maia3-5m.pt` (20,968,049 bytes)
+- SHA-256: `BA14208B2992D85502F5FB501934ABF6AAAEB355E9F3FDF90E326911F562524F`
+
+The repository does not bundle Maia-3, PyTorch, or the checkpoint. The local setup
+script installs the fixed upstream commit into `.runtime/maia3` and downloads the
+checkpoint through the official Maia cache command, then rejects it if the hash does
+not match. The checkpoint's public model card refers licensing questions back to the
+source repository but does not state a separate, unequivocal weights license. Do not
+redistribute the environment or checkpoint with application builds until the rights
+holder clarifies that permission. The paper's CC BY notice must not be interpreted as
+a license for the model weights.
+
 ## Stockfish.js 18 ASM.js compatibility backend
 
 - Package: `stockfish@18.0.8`

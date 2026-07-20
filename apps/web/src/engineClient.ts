@@ -2,6 +2,7 @@ import { listLegalMoves } from "@chess-coach/chess-core";
 import {
   createUciWorkerEngine,
   EngineUnavailableError,
+  type AnalysisProgress,
   type AnalysisResult,
   type ChessEngine,
   type EngineBackend,
@@ -51,7 +52,13 @@ function validateResult(
   return result;
 }
 
-export function createBrowserStockfishEngine(): ChessEngine {
+export type BrowserStockfishEngineFactory = (
+  backend: Exclude<EngineBackend, "deterministic">,
+) => ChessEngine;
+
+export function createBrowserStockfishEngine(
+  engineFactory?: BrowserStockfishEngineFactory,
+): ChessEngine {
   let active: ChessEngine | undefined;
   let backend: Exclude<EngineBackend, "deterministic"> = "stockfish-wasm";
   let disposed = false;
@@ -60,6 +67,7 @@ export function createBrowserStockfishEngine(): ChessEngine {
   const start = (
     candidate: Exclude<EngineBackend, "deterministic">,
   ): ChessEngine => {
+    if (engineFactory) return engineFactory(candidate);
     const worker: UciWorkerLike = createWorker(candidate);
     return createUciWorkerEngine(worker, candidate);
   };
@@ -67,6 +75,7 @@ export function createBrowserStockfishEngine(): ChessEngine {
   const analyze = async (
     request: Parameters<ChessEngine["analyze"]>[0],
     signal?: AbortSignal,
+    onProgress?: Parameters<ChessEngine["analyze"]>[2],
   ): Promise<AnalysisResult> => {
     if (disposed) throw new EngineUnavailableError("Engine has been disposed");
     const candidates: Exclude<EngineBackend, "deterministic">[] = active
@@ -79,12 +88,42 @@ export function createBrowserStockfishEngine(): ChessEngine {
       const engine = active ?? start(candidate);
       active = engine;
       backend = candidate;
+      let progressSeen = false;
+      const forwardProgress = (progress: AnalysisProgress) => {
+        progressSeen = true;
+        try {
+          onProgress?.(progress);
+        } catch {
+          // A visual subscriber cannot break backend failover.
+        }
+      };
       try {
-        const result = await engine.analyze(request, signal);
+        const result = await engine.analyze(
+          request,
+          signal,
+          onProgress === undefined ? undefined : forwardProgress,
+        );
         return validateResult(request.fen, result);
       } catch (error) {
         if (isAbortError(error)) throw error;
         lastError = error;
+        if (progressSeen) {
+          try {
+            onProgress?.(
+              Object.freeze({
+                id: request.id,
+                backend: candidate,
+                perspective: request.perspective,
+                depth: 0,
+                nodes: 0,
+                lines: Object.freeze([]),
+                reset: true as const,
+              }),
+            );
+          } catch {
+            // Reset delivery is best-effort and must not block fallback.
+          }
+        }
         await engine.dispose();
         active = undefined;
       }

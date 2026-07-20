@@ -1,4 +1,4 @@
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import type { GameSettings, HelpLevel } from "./persistence";
 
 interface GameSetupProps {
@@ -16,33 +16,35 @@ export function GameSetup({
   onResume,
   onClearSavedGame,
 }: GameSetupProps) {
+  const [opponentElo, setOpponentElo] = useState(initialSettings.opponentElo);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     onStart({
       playerColor: form.get("playerColor") as GameSettings["playerColor"],
+      opponentElo,
       enginePreset: form.get("enginePreset") as GameSettings["enginePreset"],
       helpLevel: form.get("helpLevel") as HelpLevel,
       showEvaluation: form.get("showEvaluation") === "on",
       showArrows: form.get("showArrows") === "on",
-      showThreats: form.get("showThreats") === "on",
-      soundEnabled: form.get("soundEnabled") === "on",
     });
   };
 
   return (
     <main className="shell">
       <section className="setup" aria-labelledby="setup-title">
-        <p className="eyebrow">Chess Coach · Offline</p>
-        <h1 id="setup-title">Nueva partida</h1>
-        <p className="setup-intro">
-          Practica decisiones completas contra un entrenador local. Tus partidas
-          se guardan únicamente en este dispositivo.
-        </p>
+        <header className="setup-header">
+          <p className="eyebrow">Chess Coach · Offline</p>
+          <h1 id="setup-title">Nueva partida</h1>
+          <p className="setup-intro">
+            Practica decisiones completas contra un entrenador local. Tus
+            partidas se guardan únicamente en este dispositivo.
+          </p>
+        </header>
         {hasSavedGame ? (
-          <div className="resume-card" role="status">
+          <aside className="resume-card" role="status">
             <strong>Tienes una partida guardada</strong>
-            <div className="controls">
+            <div className="resume-card-actions">
               <button type="button" onClick={onResume}>
                 Continuar partida
               </button>
@@ -54,10 +56,10 @@ export function GameSetup({
                 Borrar guardado
               </button>
             </div>
-          </div>
+          </aside>
         ) : null}
         <form className="setup-form" onSubmit={submit}>
-          <fieldset>
+          <fieldset className="setup-option-group setup-option-group-color">
             <legend>Tu color</legend>
             <label>
               <input
@@ -87,8 +89,30 @@ export function GameSetup({
               Aleatorio
             </label>
           </fieldset>
-          <fieldset>
-            <legend>Fuerza del entrenador</legend>
+          <fieldset className="setup-option-group setup-option-group-opponent">
+            <legend>Oponente Maia-3</legend>
+            <label htmlFor="opponent-elo">
+              Elo objetivo:{" "}
+              <output htmlFor="opponent-elo">{opponentElo}</output>
+            </label>
+            <input
+              id="opponent-elo"
+              name="opponentElo"
+              type="range"
+              min="600"
+              max="2600"
+              step="100"
+              value={opponentElo}
+              aria-describedby="opponent-elo-help"
+              onChange={(event) => setOpponentElo(Number(event.target.value))}
+            />
+            <small id="opponent-elo-help">
+              Escala aproximada de Lichess Blitz; no equivale directamente al
+              Elo FIDE ni al de Chess.com.
+            </small>
+          </fieldset>
+          <fieldset className="setup-option-group setup-option-group-engine">
+            <legend>Análisis del entrenador</legend>
             <label>
               <input
                 type="radio"
@@ -117,7 +141,7 @@ export function GameSetup({
               Avanzado
             </label>
           </fieldset>
-          <fieldset>
+          <fieldset className="setup-option-group setup-option-group-help">
             <legend>Nivel de ayuda</legend>
             <label>
               <input
@@ -147,7 +171,7 @@ export function GameSetup({
               Guiada
             </label>
           </fieldset>
-          <fieldset>
+          <fieldset className="setup-option-group setup-option-group-visuals">
             <legend>Ayudas visuales</legend>
             <label>
               <input
@@ -165,24 +189,10 @@ export function GameSetup({
               />{" "}
               Flechas de sugerencia
             </label>
-            <label>
-              <input
-                type="checkbox"
-                name="showThreats"
-                defaultChecked={initialSettings.showThreats}
-              />{" "}
-              Amenazas
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                name="soundEnabled"
-                defaultChecked={initialSettings.soundEnabled}
-              />{" "}
-              Sonido
-            </label>
           </fieldset>
-          <button type="submit">Comenzar partida</button>
+          <footer className="setup-form-footer">
+            <button type="submit">Comenzar partida</button>
+          </footer>
         </form>
       </section>
     </main>

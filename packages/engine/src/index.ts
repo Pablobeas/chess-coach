@@ -1,4 +1,9 @@
-import { listLegalMoves, type PlayerColor } from "@chess-coach/chess-core";
+import {
+  applyMove,
+  listLegalMoves,
+  loadPosition,
+  type PlayerColor,
+} from "@chess-coach/chess-core";
 
 export type EngineScore =
   | { readonly kind: "centipawns"; readonly value: number }
@@ -86,13 +91,71 @@ export interface AnalysisResult {
   readonly lines: readonly EngineLine[];
 }
 
+/** A normalized, non-final view of the current UCI search state. */
+export interface AnalysisProgress {
+  readonly id: string;
+  readonly backend: EngineBackend;
+  readonly perspective: PlayerColor;
+  readonly depth: number;
+  readonly nodes: number;
+  readonly lines: readonly EngineLine[];
+  /** Clears provisional state when a failed backend/search is discarded. */
+  readonly reset?: true;
+}
+
+export type AnalysisProgressCallback = (progress: AnalysisProgress) => void;
+
 export interface ChessEngine {
   analyze(
     request: AnalysisRequest,
     signal?: AbortSignal,
+    onProgress?: AnalysisProgressCallback,
   ): Promise<AnalysisResult>;
   dispose(): Promise<void>;
   getStatus(): EngineStatus;
+}
+
+export interface OpponentRequest {
+  readonly id: string;
+  readonly fen: string;
+  readonly initialFen: string;
+  readonly moves: readonly string[];
+  readonly selfElo: number;
+  readonly opponentElo: number;
+  readonly temperature: number;
+  readonly multiPv: number;
+}
+
+export interface OpponentCandidate {
+  readonly move: string;
+  readonly probabilityRank: number;
+  readonly wdl?: {
+    readonly wins: number;
+    readonly draws: number;
+    readonly losses: number;
+  };
+}
+
+export interface OpponentResult {
+  readonly id: string;
+  readonly backend: "maia3-local";
+  readonly move: string;
+  readonly candidates: readonly OpponentCandidate[];
+}
+
+export interface OpponentStatus {
+  readonly backend: "maia3-local";
+  readonly availability: EngineAvailability;
+  readonly message?: string;
+}
+
+export interface OpponentEngine {
+  chooseMove(
+    request: OpponentRequest,
+    signal?: AbortSignal,
+  ): Promise<OpponentResult>;
+  dispose(): Promise<void>;
+  getStatus(): OpponentStatus;
 }
 
 export class InvalidAnalysisRequestError extends Error {
@@ -118,6 +181,13 @@ export class EngineBootstrapError extends EngineUnavailableError {
 
 const SIMULATED_DEPTH = 1;
 const CENTIPAWN_STEP_PER_RANK = 10;
+const MAXIMUM_PRINCIPAL_VARIATION_MOVES = 128;
+const SEARCH_TIMEOUT_MILLISECONDS = 5000;
+const POST_STOP_READY_TIMEOUT_MILLISECONDS = 1000;
+// Stockfish recommends allocating as much hash as practical. 64 MB retains
+// useful transposition-table entries for the short coach searches without
+// competing excessively with the browser/WASM runtime on typical devices.
+const DEFAULT_TRANSPOSITION_TABLE_HASH_MEGABYTES = 64;
 const OPENING_AFTER_E4_FEN =
   "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
 const OPENING_AFTER_E4_RESPONSE = "e7e5";
@@ -128,7 +198,34 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-function validateRequest(request: AnalysisRequest): void {
+function waitUntilReady(
+  ready: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfAborted(signal);
+  if (signal === undefined) return ready;
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("Analysis was cancelled", "AbortError"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    ready.then(
+      () => {
+        cleanup();
+        resolve();
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function validateRequest(request: AnalysisRequest): PlayerColor {
   if (request.id.trim().length === 0) {
     throw new InvalidAnalysisRequestError(
       "Analysis request ID must not be empty",
@@ -149,50 +246,211 @@ function validateRequest(request: AnalysisRequest): void {
       "Analysis limit must be a positive integer",
     );
   }
+
+  return loadPosition(request.fen).turn;
 }
 
-function parseUciScore(line: string, perspective: PlayerColor): EngineScore {
+function isSafeNonNegativeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function normalizeSign(turn: PlayerColor, perspective: PlayerColor): 1 | -1 {
+  return turn === perspective ? 1 : -1;
+}
+
+function parseUciScore(
+  line: string,
+  turn: PlayerColor,
+  perspective: PlayerColor,
+): EngineScore | undefined {
   const score = line.match(/\bscore (cp|mate) (-?\d+)/);
-  if (!score) return { kind: "centipawns", value: 0 };
+  if (!score) return undefined;
   const value = Number(score[2]);
-  if (score[1] === "mate") return { kind: "mate", moves: value };
+  if (!Number.isSafeInteger(value)) return undefined;
+  const normalizedValue = value * normalizeSign(turn, perspective);
+  if (score[1] === "mate") {
+    return { kind: "mate", moves: normalizedValue };
+  }
   return {
     kind: "centipawns",
-    value: perspective === "white" ? value : -value,
+    value: normalizedValue,
   };
+}
+
+function parseInfoNumber(
+  line: string,
+  name: "depth" | "nodes" | "multipv",
+): number | undefined | null {
+  if (!new RegExp(`\\b${name}\\b`).test(line)) return undefined;
+  const matches = line.match(new RegExp(`\\b${name} (\\S+)`));
+  if (!matches) return null;
+  const value = Number(matches[1]);
+  return isSafeNonNegativeInteger(value) ? value : null;
+}
+
+function parseUciWdl(
+  line: string,
+  turn: PlayerColor,
+  perspective: PlayerColor,
+): EngineLine["wdl"] | undefined | null {
+  if (!/\bwdl\b/.test(line)) return undefined;
+  const match = line.match(/\bwdl (\S+) (\S+) (\S+)/);
+  if (!match) return null;
+  const wins = Number(match[1]);
+  const draws = Number(match[2]);
+  const losses = Number(match[3]);
+  if (
+    !isSafeNonNegativeInteger(wins) ||
+    !isSafeNonNegativeInteger(draws) ||
+    !isSafeNonNegativeInteger(losses)
+  ) {
+    return null;
+  }
+  return normalizeSign(turn, perspective) === 1
+    ? { wins, draws, losses }
+    : { wins: losses, draws, losses: wins };
+}
+
+function parseUciMove(move: string):
+  | {
+      readonly from: string;
+      readonly to: string;
+      readonly promotion?: "q" | "r" | "b" | "n";
+    }
+  | undefined {
+  const match = move.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/);
+  const from = match?.[1];
+  const to = match?.[2];
+  const promotion = match?.[3];
+  if (from === undefined || to === undefined) return undefined;
+  return {
+    from,
+    to,
+    ...(promotion === undefined
+      ? {}
+      : { promotion: promotion as "q" | "r" | "b" | "n" }),
+  };
+}
+
+function isSyntacticallyBoundedPrincipalVariation(
+  moves: readonly string[],
+): boolean {
+  if (moves.length > MAXIMUM_PRINCIPAL_VARIATION_MOVES) return false;
+  return moves.every((move) => parseUciMove(move) !== undefined);
+}
+
+function isLegalPrincipalVariation(
+  fen: string,
+  moves: readonly string[],
+): boolean {
+  if (!isSyntacticallyBoundedPrincipalVariation(moves)) return false;
+  try {
+    let position = loadPosition(fen);
+    for (const move of moves) {
+      const input = parseUciMove(move);
+      if (input === undefined) return false;
+      position = applyMove(position, input);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseInfoLine(
   line: string,
+  turn: PlayerColor,
   perspective: PlayerColor,
+  maximumRank: number,
 ): { depth: number; nodes: number; line: EngineLine } | undefined {
   if (!line.startsWith("info ")) return undefined;
-  const depth = Number(line.match(/\bdepth (\d+)/)?.[1] ?? 0);
-  const nodes = Number(line.match(/\bnodes (\d+)/)?.[1] ?? 0);
+  const parsedDepth = parseInfoNumber(line, "depth");
+  const parsedNodes = parseInfoNumber(line, "nodes");
+  const parsedRank = parseInfoNumber(line, "multipv");
+  if (parsedDepth === null || parsedNodes === null || parsedRank === null) {
+    return undefined;
+  }
+  const depth = parsedDepth ?? 0;
+  const nodes = parsedNodes ?? 0;
+  const rank = parsedRank ?? 1;
+  if (rank < 1 || rank > maximumRank) return undefined;
+  const score = parseUciScore(line, turn, perspective);
+  if (score === undefined) return undefined;
   const pv =
     line
       .match(/\bpv (.+)$/)?.[1]
       ?.trim()
       .split(/\s+/) ?? [];
-  if (pv.length === 0) return undefined;
-  const wdlMatch = line.match(/\bwdl (-?\d+) (-?\d+) (-?\d+)/);
-  const wdl = wdlMatch
-    ? {
-        wins: Number(wdlMatch[1]),
-        draws: Number(wdlMatch[2]),
-        losses: Number(wdlMatch[3]),
-      }
-    : undefined;
+  if (pv.length === 0 || !isSyntacticallyBoundedPrincipalVariation(pv)) {
+    return undefined;
+  }
+  const wdl = parseUciWdl(line, turn, perspective);
+  if (wdl === null) return undefined;
   return {
     depth,
     nodes,
     line: {
-      rank: 1,
-      score: parseUciScore(line, perspective),
+      rank,
+      score,
       moves: pv,
       ...(wdl === undefined ? {} : { wdl }),
     },
   };
+}
+
+function freezeEngineLine(line: EngineLine): EngineLine {
+  const score =
+    line.score.kind === "centipawns"
+      ? Object.freeze({ kind: "centipawns" as const, value: line.score.value })
+      : Object.freeze({ kind: "mate" as const, moves: line.score.moves });
+  const wdl =
+    line.wdl === undefined
+      ? undefined
+      : Object.freeze({
+          wins: line.wdl.wins,
+          draws: line.wdl.draws,
+          losses: line.wdl.losses,
+        });
+  return Object.freeze({
+    rank: line.rank,
+    score,
+    moves: Object.freeze([...line.moves]),
+    ...(wdl === undefined ? {} : { wdl }),
+  });
+}
+
+function createProgressSnapshot(
+  request: AnalysisRequest,
+  backend: EngineBackend,
+  depth: number,
+  nodes: number,
+  lines: Iterable<EngineLine>,
+): AnalysisProgress {
+  return Object.freeze({
+    id: request.id,
+    backend,
+    perspective: request.perspective,
+    depth,
+    nodes,
+    lines: Object.freeze(
+      [...lines]
+        .sort((left, right) => left.rank - right.rank)
+        .map((line) => freezeEngineLine(line)),
+    ),
+  });
+}
+
+function notifyProgress(
+  callback: AnalysisProgressCallback | undefined,
+  snapshot: AnalysisProgress,
+): void {
+  if (callback === undefined) return;
+  try {
+    callback(snapshot);
+  } catch {
+    // Progress consumers are outside the engine boundary and must not disrupt
+    // the UCI session or prevent its eventual bestmove from being processed.
+  }
 }
 
 export function createUciWorkerEngine(
@@ -206,6 +464,10 @@ export function createUciWorkerEngine(
     availability: "loading",
   };
   let bootPhase: "uci" | "ready" = "uci";
+  let searchTail: Promise<void> = Promise.resolve();
+  let rejectActiveSearch: ((error: Error) => void) | undefined;
+  let postStopReadyBarrier: Promise<void> = Promise.resolve();
+  let rejectPostStopReady: ((error: Error) => void) | undefined;
 
   let resolveReady: () => void;
   let rejectReady: (error: Error) => void;
@@ -231,6 +493,9 @@ export function createUciWorkerEngine(
     if (event.data === "uciok" && bootPhase === "uci") {
       bootPhase = "ready";
       globalThis.clearInterval(bootInterval);
+      worker.postMessage(
+        `setoption name Hash value ${DEFAULT_TRANSPOSITION_TABLE_HASH_MEGABYTES}`,
+      );
       worker.postMessage("isready");
       return;
     }
@@ -283,23 +548,85 @@ export function createUciWorkerEngine(
     if (status.availability === "loading") worker.postMessage("uci");
   }, 500);
 
-  const analyze = (
+  const drainStoppedSearch = () => {
+    let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+    let rejectDrain: (error: Error) => void;
+    const drain = new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        if (timeout !== undefined) globalThis.clearTimeout(timeout);
+        worker.removeEventListener("message", onMessage);
+        worker.removeEventListener("error", onError);
+        if (rejectPostStopReady === rejectDrain)
+          rejectPostStopReady = undefined;
+      };
+      const resolveDrain = () => {
+        cleanup();
+        if (!disposed)
+          status = { backend: status.backend, availability: "ready" };
+        resolve();
+      };
+      rejectDrain = (error: Error) => {
+        cleanup();
+        if (!disposed)
+          status = {
+            backend: status.backend,
+            availability: "error",
+            message: error.message,
+          };
+        reject(error);
+      };
+      const onMessage = (event: MessageEvent<unknown> | ErrorEvent) => {
+        if (!("data" in event) || typeof event.data !== "string") return;
+        if (event.data.trim() === "readyok") resolveDrain();
+      };
+      const onError = () =>
+        rejectDrain(
+          new EngineUnavailableError(
+            "Stockfish did not become ready after a stopped search",
+          ),
+        );
+
+      rejectPostStopReady = rejectDrain;
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", onError);
+      timeout = globalThis.setTimeout(() => {
+        rejectDrain(
+          new EngineUnavailableError(
+            "Stockfish did not become ready after a stopped search",
+          ),
+        );
+      }, POST_STOP_READY_TIMEOUT_MILLISECONDS);
+      worker.postMessage("stop");
+      worker.postMessage("isready");
+    });
+    postStopReadyBarrier = drain;
+    void drain.catch(() => undefined);
+  };
+
+  const runAnalysis = (
     request: AnalysisRequest,
     signal?: AbortSignal,
+    onProgress?: AnalysisProgressCallback,
   ): Promise<AnalysisResult> => {
-    validateRequest(request);
+    const turn = validateRequest(request);
     const preset = ENGINE_PRESETS[request.preset ?? "intermediate"];
     const generation = ++requestGeneration;
-    return ready.then(
+    return waitUntilReady(ready, signal).then(
       () =>
         new Promise<AnalysisResult>((resolve, reject) => {
           let latestDepth = 0;
           let latestNodes = 0;
           let readyForSearch = false;
           let searchStarted = false;
-          let infoSeen = false;
           let timeout: ReturnType<typeof globalThis.setTimeout>;
-          const lines: EngineLine[] = [];
+          const linesByRank = new Map<
+            number,
+            {
+              readonly depth: number;
+              readonly nodes: number;
+              readonly line: EngineLine;
+            }
+          >();
           const startSearch = () => {
             if (readyForSearch) return;
             readyForSearch = true;
@@ -312,32 +639,38 @@ export function createUciWorkerEngine(
             worker.postMessage(`position fen ${request.fen}`);
             status = { backend: status.backend, availability: "analyzing" };
             searchStarted = true;
-            const milliseconds =
+            worker.postMessage(
               request.limit.kind === "time"
-                ? request.limit.milliseconds
-                : preset.movetimeMilliseconds;
-            worker.postMessage(`go movetime ${milliseconds}`);
+                ? `go movetime ${request.limit.milliseconds}`
+                : `go nodes ${request.limit.nodes}`,
+            );
           };
+          let rejectSearch: (error: Error) => void;
           const cleanup = () => {
             globalThis.clearTimeout(timeout);
             worker.removeEventListener("message", onMessage);
             worker.removeEventListener("error", onError);
             signal?.removeEventListener("abort", onAbort);
+            if (rejectActiveSearch === rejectSearch)
+              rejectActiveSearch = undefined;
           };
-          const rejectIfCurrent = (error: Error) => {
+          rejectSearch = (error: Error) => {
             cleanup();
-            if (generation === requestGeneration) reject(error);
+            reject(error);
+          };
+          rejectActiveSearch = rejectSearch;
+          const interruptSearch = (error: Error) => {
+            cleanup();
+            drainStoppedSearch();
+            reject(error);
           };
           const onAbort = () => {
-            worker.postMessage("stop");
-            rejectIfCurrent(
+            interruptSearch(
               new DOMException("Analysis was cancelled", "AbortError"),
             );
           };
           const onError = () =>
-            rejectIfCurrent(
-              new EngineUnavailableError("Stockfish worker failed"),
-            );
+            rejectSearch(new EngineUnavailableError("Stockfish worker failed"));
           const onMessage = (event: MessageEvent<unknown> | ErrorEvent) => {
             if (!("data" in event) || typeof event.data !== "string") return;
             const line = event.data.trim();
@@ -346,24 +679,80 @@ export function createUciWorkerEngine(
               startSearch();
               return;
             }
-            const parsed = parseInfoLine(line, request.perspective);
+            const parsed = parseInfoLine(
+              line,
+              turn,
+              request.perspective,
+              request.multiPv,
+            );
             if (parsed) {
               if (!searchStarted) return;
-              infoSeen = true;
               latestDepth = Math.max(latestDepth, parsed.depth);
               latestNodes = Math.max(latestNodes, parsed.nodes);
-              lines[parsed.line.rank - 1] = parsed.line;
+              const current = linesByRank.get(parsed.line.rank);
+              if (
+                current === undefined ||
+                parsed.depth > current.depth ||
+                (parsed.depth === current.depth &&
+                  parsed.nodes >= current.nodes)
+              ) {
+                linesByRank.set(parsed.line.rank, parsed);
+                if (
+                  !disposed &&
+                  generation === requestGeneration &&
+                  !signal?.aborted
+                ) {
+                  notifyProgress(
+                    onProgress,
+                    createProgressSnapshot(
+                      request,
+                      backend,
+                      latestDepth,
+                      latestNodes,
+                      [...linesByRank.values()].map((entry) => entry.line),
+                    ),
+                  );
+                }
+              }
               return;
             }
             if (!line.startsWith("bestmove ")) return;
-            if (!searchStarted || !infoSeen) return;
+            if (!searchStarted) return;
             const bestMove = line.split(/\s+/)[1];
-            if (!bestMove || generation !== requestGeneration) return;
-            const bestLine = lines[0] ?? {
-              rank: 1,
-              score: { kind: "centipawns" as const, value: 0 },
-              moves: [bestMove],
-            };
+            if (
+              !bestMove ||
+              !isLegalPrincipalVariation(request.fen, [bestMove]) ||
+              generation !== requestGeneration
+            ) {
+              return;
+            }
+            const bestLine = linesByRank.get(1)?.line;
+            if (bestLine === undefined) {
+              status = { backend: status.backend, availability: "ready" };
+              rejectSearch(
+                new EngineUnavailableError(
+                  "Engine returned no valid principal variation for its best move",
+                ),
+              );
+              return;
+            }
+            if (!isLegalPrincipalVariation(request.fen, bestLine.moves)) {
+              status = { backend: status.backend, availability: "ready" };
+              rejectSearch(
+                new EngineUnavailableError(
+                  "Engine returned an invalid principal variation for rank one",
+                ),
+              );
+              return;
+            }
+            const additionalLines = [...linesByRank.values()]
+              .map((entry) => entry.line)
+              .filter((candidate) => candidate.rank !== 1)
+              .sort((left, right) => left.rank - right.rank)
+              .slice(0, Math.max(0, request.multiPv - 1))
+              .filter((candidate) =>
+                isLegalPrincipalVariation(request.fen, candidate.moves),
+              );
             cleanup();
             status = { backend: status.backend, availability: "ready" };
             resolve({
@@ -375,16 +764,22 @@ export function createUciWorkerEngine(
               lines: Object.freeze([
                 Object.freeze({
                   ...bestLine,
-                  moves: Object.freeze([bestMove, ...bestLine.moves.slice(1)]),
+                  moves: Object.freeze([...bestLine.moves]),
                 }),
+                ...additionalLines.map((candidate) =>
+                  Object.freeze({
+                    ...candidate,
+                    moves: Object.freeze([...candidate.moves]),
+                  }),
+                ),
               ]),
             });
           };
           timeout = globalThis.setTimeout(() => {
-            rejectIfCurrent(
+            interruptSearch(
               new EngineUnavailableError("Engine analysis timed out"),
             );
-          }, 5000);
+          }, SEARCH_TIMEOUT_MILLISECONDS);
           if (disposed) {
             reject(
               new EngineUnavailableError("The chess engine has been disposed"),
@@ -405,9 +800,30 @@ export function createUciWorkerEngine(
     );
   };
 
+  const analyze = (
+    request: AnalysisRequest,
+    signal?: AbortSignal,
+    onProgress?: AnalysisProgressCallback,
+  ): Promise<AnalysisResult> => {
+    const result = searchTail
+      .then(() => postStopReadyBarrier)
+      .then(() => runAnalysis(request, signal, onProgress));
+    searchTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
   return {
     analyze,
     async dispose() {
+      rejectActiveSearch?.(
+        new EngineUnavailableError("The chess engine has been disposed"),
+      );
+      rejectPostStopReady?.(
+        new EngineUnavailableError("The chess engine has been disposed"),
+      );
       disposed = true;
       requestGeneration += 1;
       globalThis.clearTimeout(bootTimeout);
@@ -454,6 +870,7 @@ export function createDeterministicEngine(): ChessEngine {
     async analyze(
       request: AnalysisRequest,
       signal?: AbortSignal,
+      onProgress?: AnalysisProgressCallback,
     ): Promise<AnalysisResult> {
       if (disposed) {
         throw new Error("Engine has been disposed");
@@ -468,7 +885,7 @@ export function createDeterministicEngine(): ChessEngine {
       await Promise.resolve();
       throwIfAborted(signal);
 
-      return Object.freeze({
+      const result = Object.freeze({
         id: request.id,
         backend: "deterministic" as const,
         perspective: request.perspective,
@@ -487,6 +904,19 @@ export function createDeterministicEngine(): ChessEngine {
           ),
         ),
       });
+      if (!disposed && !signal?.aborted) {
+        notifyProgress(
+          onProgress,
+          createProgressSnapshot(
+            request,
+            "deterministic",
+            result.depth,
+            result.nodes,
+            result.lines,
+          ),
+        );
+      }
+      return result;
     },
 
     async dispose(): Promise<void> {

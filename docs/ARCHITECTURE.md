@@ -6,12 +6,17 @@
 React/PWA
   -> GameSession
       -> chess-core (legalidad, FEN, PGN)
-      -> engine client
+      -> analysis engine client
           -> Web Worker
               -> UCI adapter
                   -> Stockfish/WASM
+      -> opponent client
+          -> HTTP loopback (127.0.0.1)
+              -> Node companion
+                  -> UCI subprocess
+                      -> Maia-3 5M / PyTorch CPU
       -> coach pipeline
-          -> evidence -> score -> motif -> hint -> message
+          -> turn record -> evidence -> score -> motif -> hint -> message
       -> local storage (settings, session, PGN)
 ```
 
@@ -29,9 +34,17 @@ reglas para evitar que detalles de terceros se propaguen por toda la aplicación
 
 ### `packages/engine`
 
-Expone un contrato asíncrono y cancelable. El adaptador real vive en un Web Worker,
-asigna identificadores a cada análisis y descarta respuestas antiguas. El presupuesto
-de análisis se expresa por tiempo/nodos y se adapta al dispositivo.
+Expone contratos asíncronos y cancelables separados para análisis y oponente. El
+adaptador de Stockfish vive en un Web Worker. El adaptador de Maia-3 llama al companion
+local por HTTP loopback y nunca expone texto UCI a React. Ambos asignan identificadores
+y la UI descarta respuestas antiguas. El presupuesto de análisis se expresa por
+tiempo/nodos y se adapta al dispositivo.
+
+El companion no publica su estado `ready` hasta completar el handshake UCI, cargar el
+modelo y obtener una jugada legal de calentamiento. Por tanto, `play` abre la interfaz
+solo cuando la primera inferencia real ya terminó. Un fallo posterior conserva la FEN y
+el historial: el usuario puede reintentar con un identificador nuevo, mientras la UI
+descarta cualquier respuesta perteneciente a la solicitud anterior.
 
 ### `packages/coach`
 
@@ -42,32 +55,97 @@ El texto visible se produce con un renderizador determinista de plantillas. Reci
 evidencia estructurada —clasificación, motivo, piezas, casillas y variante— y devuelve
 mensajes localizados. No consulta un LLM ni una API para redactar cada explicación.
 
+Cada media jugada posee un registro versionado e indexado. El registro mantiene por
+separado actor, FEN anterior/posterior, evaluación normalizada, evidencia, clasificación,
+motivo, pistas y copia renderizada. La UI deriva el texto y los iconos finales solo de
+los registros del usuario. Mientras la búsqueda sigue activa puede mostrar un icono
+provisional transitorio, que nunca se persiste.
+
 ## Contrato de análisis
 
 Cada solicitud incluye FEN, límite, MultiPV y perspectiva. Cada resultado incluye
 identificador, profundidad, nodos, variantes y una puntuación discriminada como
 centipeones o mate; WDL es opcional. Nunca uses un valor de mate como centipeones.
 
+Una solicitud puede suscribirse a progreso normalizado. Cada snapshot procede de una
+línea UCI `info` válida de la misma búsqueda y declara identificador, perspectiva,
+profundidad, nodos y variantes disponibles. El progreso no resuelve la promesa, no
+ejecuta otro `go` y deja de notificarse al cancelar o recibir `bestmove`. Si un backend
+que ya publicó progreso falla, el adaptador emite un `reset` antes de intentar el
+fallback para retirar cualquier valoración basada en esa búsqueda descartada.
+
+El entrenador solicita varias variantes únicamente para la posición anterior a la
+jugada, donde se necesitan para detectar alternativas equivalentes. Para evaluar la
+posición resultante basta la variante principal. Las líneas `info` se validan primero
+de forma sintáctica y acotada; la reproducción legal completa se realiza una sola vez
+sobre las variantes finales antes de publicar el resultado.
+
+Stockfish configura una tabla de transposición de 64 MB una sola vez durante el
+handshake UCI. La tabla no se limpia entre búsquedas, de modo que las posiciones
+repetidas pueden reutilizar trabajo sin cambiar `movetime`, `MultiPV` ni la fuerza.
+
 ## Secuencia tras una jugada
 
 1. `chess-core` valida y aplica el movimiento.
 2. Se cancela cualquier análisis incompatible con la nueva posición.
 3. El motor evalúa la mejor alternativa previa y la posición resultante.
-4. `coach` normaliza ambas desde la perspectiva del jugador.
-5. Se calcula el cambio de resultado esperado y se detectan motivos verificables.
-6. La UI presenta feedback y habilita la siguiente interacción.
+4. Desde profundidad suficiente, `coach` clasifica el progreso y la UI puede mostrar
+   un icono provisional identificado como tal.
+5. Al llegar `bestmove`, `coach` normaliza la evidencia final desde la perspectiva del
+   jugador, calcula el cambio de resultado esperado y detecta motivos verificables.
+6. La UI sustituye el provisional por el icono final y presenta el feedback completo.
 7. El oponente selecciona una jugada acorde con la fuerza configurada.
+
+La jugada del oponente se aplica en cuanto llega una respuesta legal; no existe una
+espera artificial adicional. El tiempo visible procede únicamente de la inferencia y
+de la animación no bloqueante de la pieza.
+
+El análisis mantiene una línea temporal de evaluaciones por posición. Las solicitudes
+Stockfish se serializan y cancelan por generación. Seleccionar una posición pasada
+mueve el cursor real conservando temporalmente el futuro; continuar desde ese punto
+descarta automáticamente la rama posterior, sin confirmación, y conserva un único
+respaldo recuperable con la línea completa, el cursor, las anotaciones y el feedback
+disponible.
+
+Los análisis completos se conservan en una caché LRU local y acotada, identificada por
+FEN, perspectiva, preset, MultiPV y límite. Las solicitudes idénticas que coinciden en
+el tiempo comparten además una única promesa en curso y distribuyen progreso a sus
+consumidores activos. Durante el turno del usuario se
+precalcula exactamente la evaluación anterior que consumirá el entrenador: si termina,
+se lee de caché y, si sigue ejecutándose, se espera la misma búsqueda. La posición
+posterior siempre recibe su búsqueda completa; una puntuación MultiPV calculada en la
+raíz anterior nunca se reutiliza como evaluación del hijo. Abortos y errores nunca
+entran en la caché.
 
 ## Fuerza del oponente
 
-La fuerza no debe depender solo de profundidad. La implementación evaluará opciones
-UCI soportadas, presupuesto, MultiPV y selección controlada entre candidatas. Toda
-aleatoriedad debe admitir semilla para tests reproducibles.
+Maia-3 5M recibe `SelfElo` y `OppoElo` por UCI. Mientras no exista una estimación
+independiente de la fuerza del usuario, ambos reciben el Elo objetivo elegido para
+modelar una partida del mismo segmento. `Temperature=1` conserva variedad humana y
+`MultiPV=5` permite registrar candidatas; Stockfish no selecciona la jugada rival.
+
+La escala procede de partidas Lichess Blitz y no representa una equivalencia exacta
+con FIDE o Chess.com. El companion escucha solo en `127.0.0.1`, procesa las solicitudes
+en serie y el cliente vuelve a validar la legalidad de cada `bestmove` contra el FEN
+actual antes de aplicarlo.
 
 ## Persistencia
 
 El MVP conserva ajustes, partida activa y archivos PGN en almacenamiento local. Una
 futura sincronización debe ser opt-in y tener un adaptador separado.
+
+La sesión persistida incluye cursor, continuación recuperable, un checkpoint opcional
+de la última rama reemplazada y registros del entrenador validados contra índice, UCI
+y FEN. El checkpoint sobrevive a una recarga y se consume al recuperarlo. Una
+migración nunca inventa feedback para una jugada que no pueda asociarse de forma
+inequívoca.
+
+Para renderizar y validar listas completas, las posiciones históricas se reconstruyen
+en un único recorrido hacia delante compartido por UI y persistencia. La navegación
+interactiva conserva una sola sesión completa y un cursor entero. La posición visible
+se materializa con un único recorrido hacia delante hasta ese cursor; deshacer o
+rehacer ya no almacena sesiones-prefijo duplicadas. Solo al continuar desde una
+posición pasada se crea una nueva rama truncada.
 
 ## Integraciones opcionales
 
@@ -80,3 +158,6 @@ MVP; una prueba futura requeriría una decisión nueva, opt-in y fallback determ
 
 Antes de integrar un binario Stockfish/WASM se registrarán versión, URL de origen,
 hash, licencia, avisos y mecanismo para ofrecer el código fuente correspondiente.
+Maia-3 se instala desde un commit fijado del repositorio oficial en un entorno local
+ignorado por Git; no se redistribuye su código ni su checkpoint con esta aplicación.
+La procedencia, hash y restricción de redistribución están en `docs/THIRD_PARTY.md`.

@@ -2,6 +2,8 @@ node_modules/
 .pnpm-store/
 dist/
 coverage/
+.playwright-cli/
+output/playwright/
 .vite/
 .turbo/
 *.log
@@ -11,3 +13,4 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.runtime/

@@ -12,6 +12,7 @@
     "test": "vitest run src --passWithNoTests"
   },
   "dependencies": {
-    "@chess-coach/chess-core": "workspace:*"
+    "@chess-coach/chess-core": "workspace:*",
+    "stockfish": "18.0.8"
   }
 }

@@ -20,12 +20,16 @@ de evidencia; el entrenador interpreta esa evidencia.
 
 ## MVP
 
-- Elegir color, fuerza aproximada y nivel de ayuda.
-- Jugar una partida legal contra un motor local.
+- Elegir color, Elo humano aproximado y nivel de ayuda.
+- Jugar una partida legal contra Maia-3 local, manteniendo Stockfish para análisis.
+- Ver siempre las piezas del usuario en la zona inferior del tablero, también al
+  jugar con negras, sin demoras artificiales después de que Maia elija su jugada.
 - Pausar, reanudar, deshacer y abandonar.
 - Feedback tras la jugada con evidencia estructurada.
+- Voz cercana y serena, con consecuencia, mejor alternativa y lógica verificables.
+- Historial analítico: evaluación de ambos bandos e icono de calidad solo del usuario.
 - Pistas en tres niveles: objetivo, zona/pieza y movimiento.
-- Opciones para flechas de sugerencia, amenazas y barra de evaluación.
+- Opciones para flechas de sugerencia y barra de evaluación.
 - Guardado local de partida y exportación PGN.
 - Revisión final con momentos críticos.
 - Interfaz móvil, accesible e instalable como PWA.

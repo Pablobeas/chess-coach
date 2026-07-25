@@ -242,10 +242,17 @@ interface QueueJob<T> {
   readonly priority: number;
   readonly sequence: number;
   readonly signal: AbortSignal | undefined;
+  readonly interrupt: (() => void) | undefined;
   readonly execute: () => Promise<T>;
   readonly resolve: (value: T) => void;
   readonly reject: (error: unknown) => void;
   readonly detachAbort: () => void;
+}
+
+interface ActiveQueueJob {
+  readonly sequence: number;
+  readonly priority: number;
+  interrupt(): void;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined, label: string): void {
@@ -280,6 +287,33 @@ function waitUntilReady(
       },
     );
   });
+}
+
+function mergeAbortSignals(
+  primary: AbortSignal | undefined,
+  secondary: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (primary === undefined) return secondary;
+  if (secondary === undefined) return primary;
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (primary.aborted || secondary.aborted) {
+    controller.abort();
+    return controller.signal;
+  }
+
+  primary.addEventListener("abort", abort, { once: true });
+  secondary.addEventListener("abort", abort, { once: true });
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      primary.removeEventListener("abort", abort);
+      secondary.removeEventListener("abort", abort);
+    },
+    { once: true },
+  );
+  return controller.signal;
 }
 
 function validateAnalysisRequest(request: AnalysisRequest): PlayerColor {
@@ -696,6 +730,7 @@ export function createUciWorkerBroker(
   let queueSequence = 0;
   let pumpActive = false;
   let pumpScheduled = false;
+  let activeQueueJob: ActiveQueueJob | undefined;
   const pendingJobs: QueueJob<unknown>[] = [];
 
   let resolveReady!: () => void;
@@ -1186,14 +1221,24 @@ export function createUciWorkerBroker(
           continue;
         }
         try {
+          activeQueueJob = {
+            sequence: next.sequence,
+            priority: next.priority,
+            interrupt: () => next.interrupt?.(),
+          };
           const result = await next.execute();
           next.resolve(result);
         } catch (error) {
           next.reject(error);
+        } finally {
+          if (activeQueueJob?.sequence === next.sequence) {
+            activeQueueJob = undefined;
+          }
         }
       }
     } finally {
       pumpActive = false;
+      activeQueueJob = undefined;
       if (!disposed && pendingJobs.length > 0) {
         void pumpQueue();
       }
@@ -1205,6 +1250,7 @@ export function createUciWorkerBroker(
     signal: AbortSignal | undefined,
     execute: () => Promise<T>,
     abortLabel: string,
+    interrupt?: () => void,
   ): Promise<T> => {
     if (disposed) return Promise.reject(createDisposedError());
     if (signal?.aborted) {
@@ -1218,6 +1264,7 @@ export function createUciWorkerBroker(
         priority,
         sequence,
         signal,
+        interrupt,
         execute,
         resolve,
         reject,
@@ -1237,6 +1284,13 @@ export function createUciWorkerBroker(
           return right.priority - left.priority;
         return left.sequence - right.sequence;
       });
+      if (
+        activeQueueJob !== undefined &&
+        priority > activeQueueJob.priority &&
+        activeQueueJob.interrupt !== undefined
+      ) {
+        activeQueueJob.interrupt();
+      }
       if (!pumpScheduled) {
         pumpScheduled = true;
         queueMicrotask(() => {
@@ -1266,11 +1320,14 @@ export function createUciWorkerBroker(
       return waitUntilReady(ready, signal, "Engine prewarm");
     },
     analyze(request, signal, onProgress) {
+      const interruptController = new AbortController();
+      const mergedSignal = mergeAbortSignals(signal, interruptController.signal);
       return enqueue(
         1,
         signal,
-        () => runAnalysis(request, signal, onProgress),
+        () => runAnalysis(request, mergedSignal, onProgress),
         "Analysis",
+        () => interruptController.abort(),
       );
     },
     chooseMove(request, signal) {

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/generate-pwa.mjs",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run src --passWithNoTests"
+    "test": "vitest run src --passWithNoTests && node --test scripts/generate-pwa.test.mjs"
   },
   "dependencies": {
     "@chess-coach/chess-core": "workspace:*",

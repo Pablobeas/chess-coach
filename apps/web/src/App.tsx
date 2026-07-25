@@ -121,8 +121,63 @@ type PositionNotice = {
   readonly kind: "check" | "checkmate";
   readonly checkedColor: PlayerColor;
 };
+export type GameTurnStatusView = {
+  readonly text: string;
+  readonly details: string;
+  readonly boardLabel: string;
+  readonly terminal: boolean;
+};
 const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
+const oppositeColor = (color: PlayerColor): PlayerColor =>
+  color === "white" ? "black" : "white";
+
+export function describeGameTurnStatus(
+  game: Pick<GameSession, "isGameOver" | "isCheckmate" | "turn">,
+  playerColor: PlayerColor,
+): GameTurnStatusView {
+  const playerSummary = `Tú juegas con ${colorName(playerColor)}`;
+  if (game.isCheckmate) {
+    const winner = colorName(oppositeColor(game.turn));
+    return {
+      text: "Jaque mate",
+      details: `Ganan ${winner} · ${playerSummary}`,
+      boardLabel: `jaque mate, ganan ${winner}`,
+      terminal: true,
+    };
+  }
+  if (game.isGameOver) {
+    return {
+      text: "Tablas",
+      details: `Empate · ${playerSummary}`,
+      boardLabel: "tablas, empate",
+      terminal: true,
+    };
+  }
+  const sideToMove = colorName(game.turn);
+  return {
+    text: `Turno de ${sideToMove}`,
+    details: playerSummary,
+    boardLabel: `turno de ${sideToMove}`,
+    terminal: false,
+  };
+}
+
+export function GameTurnStatus({
+  status,
+}: {
+  readonly status: GameTurnStatusView;
+}) {
+  return (
+    <p className="turn" role="status" aria-live="polite" aria-atomic="true">
+      {status.terminal ? null : (
+        <span className="turn-indicator" aria-hidden="true" />
+      )}
+      {status.text} · {status.details}
+    </p>
+  );
+}
+
 const isDesktopLocalhost = () =>
   typeof window !== "undefined" &&
   ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
@@ -565,6 +620,7 @@ export function App() {
   const playerColor: PlayerColor =
     settings.playerColor === "random" ? "white" : settings.playerColor;
   const engineColor: PlayerColor = playerColor === "white" ? "black" : "white";
+  const gameTurnStatus = describeGameTurnStatus(game, playerColor);
   const board = useMemo(() => boardForFen(game.fen), [game.fen]);
   const visualBoardRows = useMemo(
     () => orientedBoardRows(playerColor),
@@ -1647,11 +1703,7 @@ export function App() {
               </small>
             ) : null}
           </div>
-          <p className="turn" aria-live="polite">
-            <span className="turn-indicator" aria-hidden="true" />
-            Turno de {colorName(game.turn)} · Tú juegas con{" "}
-            {colorName(playerColor)}
-          </p>
+          <GameTurnStatus status={gameTurnStatus} />
         </header>
         <p className="visually-hidden" role="status" aria-atomic="true">
           {workspaceContextNotice}
@@ -1684,7 +1736,7 @@ export function App() {
               className="board"
               role="grid"
               aria-describedby="board-help"
-              aria-label={`Tablero: turno de ${colorName(game.turn)}`}
+              aria-label={`Tablero: ${gameTurnStatus.boardLabel}`}
             >
               {visualBoardRows.map((row, rowIndex) => (
                 <div role="row" key={row[0]}>

@@ -473,6 +473,45 @@ describe("UCI worker engine", () => {
     });
   });
 
+  it("interrupts an active analysis so an opponent search can start promptly on the same broker", async () => {
+    const worker = new ControlledUciWorker();
+    const broker = createUciWorkerBroker(worker);
+
+    const analysis = broker.analyze({
+      id: "analysis-preempted-by-opponent",
+      fen: initialPosition,
+      perspective: "white",
+      multiPv: 1,
+      limit: { kind: "nodes", nodes: 200 },
+    });
+
+    await expect
+      .poll(() => worker.messages.filter((message) => message.startsWith("go ")))
+      .toEqual(["go nodes 200"]);
+
+    const opponent = broker.chooseMove({
+      ...defaultOpponentRequest,
+      id: "opponent-after-active-analysis",
+    });
+
+    await expect
+      .poll(() => worker.messages.includes("stop"))
+      .toBe(true);
+    await expect
+      .poll(() => worker.messages.filter((message) => message.startsWith("go ")))
+      .toEqual(["go nodes 200", "go movetime 180"]);
+
+    worker.emit("info depth 8 nodes 42 score cp 24 pv e2e4 e7e5");
+    worker.emit("bestmove e2e4");
+
+    await expect(analysis).rejects.toMatchObject({ name: "AbortError" });
+    await expect(opponent).resolves.toMatchObject({
+      id: "opponent-after-active-analysis",
+      backend: "stockfish-wasm",
+      move: "e2e4",
+    });
+  });
+
   it("publishes normalized progress snapshots before the final result without a second search", async () => {
     const worker = new FakeUciWorker({
       info: [

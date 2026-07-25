@@ -1,5 +1,11 @@
 # Registro de decisiones
 
+## ADR-008 — Workspace de líneas v6
+
+Se reemplaza la recuperación de una rama por líneas identificadas persistentes para
+que una prueba inválida no reemplace a la principal. Al alcanzar cinco, la persona
+elige explícitamente cuál borrar; no hay eliminación automática.
+
 ## ADR-001 — Aplicación web/PWA primero
 
 **Estado:** aceptada.
@@ -32,9 +38,30 @@ visible se nombrará como estimación y conservará su versión de calibración.
 
 **Estado:** aceptada.
 
-El agente principal usa Sol con razonamiento alto. Terra cubre tareas especializadas,
-Luna exploración/evaluaciones acotadas y GPT-5.5 aporta una revisión independiente.
-La profundidad máxima es 1 para evitar delegación recursiva.
+El agente principal usa Sol con razonamiento alto exclusivamente como jefe de
+orquestación: planifica, define criterios, asigna, media, decide y sintetiza. No
+implementa, no edita archivos, no genera activos y no ejecuta validaciones rutinarias.
+Cada encargo se clasifica antes de ejecutarse y se delega al rol ejecutor más específico,
+incluso si solo tiene una línea de trabajo. GPT-5.4 implementa motor y código general;
+Terra cubre frontend, coaching y activos visuales originales; Luna explora y evalúa;
+GPT-5.4 mini realiza cambios mecánicos; y GPT-5.5 aporta una revisión independiente
+read-only.
+
+Cada entrega del ejecutor incluye un handoff con diff, evidencia y riesgos. Sol envía ese
+material al revisor y devuelve `NEEDS_CHANGES` al mismo ejecutor mediante follow-up,
+conservando la propiedad de archivos. El ciclo continúa mientras haya progreso y termina
+con `APPROVED` y criterios/pruebas cumplidos, ante un bloqueo que exige usuario, permiso o
+expansión, o por estancamiento cuando se repite un hallazgo sin evidencia nueva. El revisor
+puede responder `APPROVED_WITH_CONTINUATION`; Sol solo inicia esa continuación si es
+concreta, medible, segura y permanece dentro del objetivo original. Las expansiones se
+presentan al usuario.
+
+La política del repositorio limita la profundidad a 1 para evitar delegación
+recursiva y la concurrencia a cuatro subagentes. Estos límites viven en `AGENTS.md`
+para ser compatibles con las superficies de Codex que usan esquemas de configuración
+distintos. Los modelos configurados son preferencias por rol, no concesiones de
+acceso: si una cuenta o superficie no ofrece uno, el orquestador mantiene el rol y
+declara el fallback disponible más cercano.
 
 ## ADR-006 — Feedback determinista sin LLM
 
@@ -85,9 +112,10 @@ local mantiene el proceso Python/PyTorch caliente y ofrece a la PWA un contrato 
 limitado a `127.0.0.1`. Stockfish WASM permanece separado y continúa siendo la fuente
 de verdad para evaluación y feedback; Maia-3 solo selecciona movimientos del rival.
 
-Se elige el modelo 5M por su latencia y tamaño. `play` instala el código desde el commit
-oficial fijado y verifica el SHA-256 del checkpoint. El entorno y los pesos viven bajo
-`.runtime`, fuera del repositorio, y solo la primera preparación necesita red.
+Se elige el modelo 5M por su latencia y tamaño. `pnpm dev` y `play` instalan el código
+desde el commit oficial fijado, verifican el SHA-256 del checkpoint y no exponen la web
+hasta que el bridge responde `ready` tras un calentamiento real. El entorno y los pesos
+viven bajo `.runtime`, fuera del repositorio, y solo la primera preparación necesita red.
 
 El código upstream está bajo AGPL-3.0. La tarjeta pública del checkpoint no declara
 una licencia de pesos inequívoca por separado: hasta obtener confirmación del autor,
@@ -169,3 +197,24 @@ original y es la única que se persiste o alimenta el feedback. No se añade una
 rápida independiente —que consumiría tiempo adicional— ni se reutiliza una puntuación
 MultiPV de la posición padre como evaluación del hijo. La función pura de assessment
 es compartida entre ambos caminos para impedir divergencias de reglas o umbrales.
+
+## ADR-014 â€” Stockfish local como rival hosted/mÃ³vil
+
+**Estado:** aceptada.
+
+El modo hosted, estÃ¡tico o mÃ³vil sin companion no llamarÃ¡ a `/maia3-api`. En ese
+entorno, Stockfish WASM local asume tambiÃ©n el rol de `opponent` para conservar una
+ruta offline completa y no filtrar FEN/PGN a la red. Maia-3 sigue siendo una mejora
+opcional limitada al desarrollo local sobre `127.0.0.1`.
+
+Para evitar dos Workers compitiendo por CPU y memoria en mÃ³vil, anÃ¡lisis y rival
+comparten un Ãºnico broker UCI. El broker serializa trabajos, da prioridad a la jugada
+del rival frente a anÃ¡lisis en cola, valida toda salida UCI y restaura las opciones del
+motor al cambiar de actor. El anÃ¡lisis pedagÃ³gico mantiene fuerza completa; el rival
+degrada por tiempo breve y por las opciones de fuerza limitada que el backend soporte,
+primero `UCI_LimitStrength`/`UCI_Elo` y, si no existen, `Skill Level`.
+
+La tabla `Hash` deja de fijarse a 64 MB en todos los dispositivos. El runtime local la
+adapta a 16/32/64 MB segÃºn memoria expuesta y concurrencia para reducir presiÃ³n en
+dispositivos lentos sin romper la partida. El fallback ASM.js permanece disponible solo
+cuando el backend WASM no puede arrancar.

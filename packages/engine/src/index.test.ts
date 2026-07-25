@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createDeterministicEngine,
+  createUciWorkerBroker,
   createUciWorkerEngine,
   type AnalysisProgress,
+  type OpponentRequest,
   type UciWorkerLike,
 } from "./index";
 
@@ -127,12 +129,25 @@ class FakeUciWorker implements UciWorkerLike {
       info: ["info depth 8 nodes 42 score cp 24 pv e2e4 e7e5"],
       bestmove: "e2e4",
     },
+    private readonly options: readonly string[] = [
+      "option name Hash type spin default 16 min 1 max 1024",
+      "option name MultiPV type spin default 1 min 1 max 500",
+      "option name Skill Level type spin default 20 min 0 max 20",
+      "option name UCI_ShowWDL type check default false",
+      "option name UCI_LimitStrength type check default false",
+      "option name UCI_Elo type spin default 1320 min 1320 max 3190",
+    ],
   ) {}
 
   postMessage(message: string): void {
     this.messages.push(message);
     if (message === "uci") {
       queueMicrotask(() => {
+        for (const option of this.options) {
+          for (const listener of this.listeners.message) {
+            listener(new MessageEvent("message", { data: option }));
+          }
+        }
         for (const listener of this.listeners.message)
           listener(new MessageEvent("message", { data: "uciok" }));
       });
@@ -173,6 +188,12 @@ class FakeUciWorker implements UciWorkerLike {
 
   listenerCount(type: "message" | "error"): number {
     return this.listeners[type].size;
+  }
+
+  protected emit(message: string): void {
+    for (const listener of this.listeners.message) {
+      listener(new MessageEvent("message", { data: message }));
+    }
   }
 
   terminate(): void {}
@@ -240,13 +261,218 @@ class ControlledUciWorker extends FakeUciWorker {
   }
 
   emit(message: string): void {
-    for (const listener of this.listeners.message) {
-      listener(new MessageEvent("message", { data: message }));
+    super.emit(message);
+  }
+}
+
+class DelayedBootWorker extends FakeUciWorker {
+  override postMessage(message: string): void {
+    this.messages.push(message);
+  }
+
+  emitBootReady(): void {
+    this.emit("uciok");
+    this.emit("readyok");
+  }
+}
+
+class QueuedSearchWorker extends FakeUciWorker {
+  readonly goCommands: string[] = [];
+  private readonly queue: UciSearchResponse[] = [];
+
+  enqueueSearch(response: UciSearchResponse): void {
+    this.queue.push(response);
+  }
+
+  override postMessage(message: string): void {
+    if (message.startsWith("go ")) {
+      this.messages.push(message);
+      this.goCommands.push(message);
+      return;
+    }
+    super.postMessage(message);
+  }
+
+  finishNext(): void {
+    const response = this.queue.shift();
+    if (!response) throw new Error("No queued search response");
+    for (const info of response.info) {
+      this.emit(info);
+    }
+    if (response.bestmove !== undefined) {
+      this.emit(`bestmove ${response.bestmove}`);
     }
   }
 }
 
+const defaultOpponentRequest: OpponentRequest = {
+  id: "opponent-1",
+  fen: initialPosition,
+  initialFen: initialPosition,
+  moves: [],
+  selfElo: 600,
+  opponentElo: 600,
+  temperature: 1,
+  multiPv: 2,
+};
+
 describe("UCI worker engine", () => {
+  it("prewarms the broker through a single shared initialization", async () => {
+    const worker = new FakeUciWorker();
+    const broker = createUciWorkerBroker(worker);
+
+    await Promise.all([broker.prewarm(), broker.prewarm(), broker.ready()]);
+
+    expect(worker.messages.filter((message) => message === "uci")).toHaveLength(
+      1,
+    );
+    expect(
+      worker.messages.filter(
+        (message) => message === "setoption name Hash value 64",
+      ),
+    ).toHaveLength(1);
+    expect(
+      worker.messages.filter((message) => message === "isready"),
+    ).toHaveLength(1);
+  });
+
+  it("lets a cancelled prewarm waiter exit without aborting the shared bootstrap", async () => {
+    const worker = new DelayedBootWorker();
+    const broker = createUciWorkerBroker(worker);
+    const controller = new AbortController();
+    const prewarm = broker.prewarm(controller.signal);
+
+    controller.abort();
+    await expect(prewarm).rejects.toMatchObject({ name: "AbortError" });
+
+    worker.emitBootReady();
+    await expect(broker.ready()).resolves.toBeUndefined();
+  });
+
+  it("prioritizes a queued opponent search ahead of queued analysis on the same broker", async () => {
+    const worker = new QueuedSearchWorker();
+    const broker = createUciWorkerBroker(worker);
+    worker.enqueueSearch({
+      info: ["info depth 6 nodes 30 multipv 1 score cp 12 pv e2e4 e7e5"],
+      bestmove: "e2e4",
+    });
+    worker.enqueueSearch({
+      info: ["info depth 8 nodes 80 multipv 1 score cp 24 pv e2e4 e7e5"],
+      bestmove: "e2e4",
+    });
+
+    const analysis = broker.analyze({
+      id: "analysis-after-opponent",
+      fen: initialPosition,
+      perspective: "white",
+      multiPv: 1,
+      limit: { kind: "nodes", nodes: 100 },
+    });
+    const opponent = broker.chooseMove(defaultOpponentRequest);
+
+    await expect.poll(() => worker.goCommands).toEqual(["go movetime 180"]);
+    worker.finishNext();
+    await expect(opponent).resolves.toMatchObject({
+      id: "opponent-1",
+      backend: "stockfish-wasm",
+      move: "e2e4",
+    });
+
+    await expect
+      .poll(() => worker.goCommands)
+      .toEqual(["go movetime 180", "go nodes 100"]);
+    worker.finishNext();
+    await expect(analysis).resolves.toMatchObject({
+      id: "analysis-after-opponent",
+      backend: "stockfish-wasm",
+    });
+  });
+
+  it("restores full-strength analysis options after a limited opponent search", async () => {
+    const worker = new FakeUciWorker();
+    const broker = createUciWorkerBroker(worker);
+
+    await expect(
+      broker.chooseMove({
+        ...defaultOpponentRequest,
+        id: "opponent-strength",
+        multiPv: 3,
+      }),
+    ).resolves.toMatchObject({
+      id: "opponent-strength",
+      backend: "stockfish-wasm",
+      move: "e2e4",
+    });
+
+    await expect(
+      broker.analyze({
+        id: "analysis-restored",
+        fen: initialPosition,
+        perspective: "white",
+        preset: "beginner",
+        multiPv: 1,
+        limit: { kind: "time", milliseconds: 10 },
+      }),
+    ).resolves.toMatchObject({
+      id: "analysis-restored",
+      backend: "stockfish-wasm",
+    });
+
+    expect(worker.messages).toContain(
+      "setoption name UCI_LimitStrength value true",
+    );
+    expect(worker.messages).toContain("setoption name UCI_Elo value 1320");
+    expect(worker.messages).toContain("setoption name MultiPV value 3");
+    expect(worker.messages).toContain("go movetime 180");
+    expect(worker.messages).toContain(
+      "setoption name UCI_LimitStrength value false",
+    );
+    expect(worker.messages).toContain("setoption name Skill Level value 20");
+    expect(worker.messages).toContain("setoption name MultiPV value 1");
+  });
+
+  it("cancels an opponent search, drains stop/isready, and starts the next analysis cleanly", async () => {
+    const worker = new ControlledUciWorker();
+    const broker = createUciWorkerBroker(worker);
+    const controller = new AbortController();
+    const opponent = broker.chooseMove(
+      { ...defaultOpponentRequest, id: "opponent-cancelled" },
+      controller.signal,
+    );
+
+    await expect
+      .poll(() =>
+        worker.messages.some((message) => message === "go movetime 180"),
+      )
+      .toBe(true);
+    controller.abort();
+    worker.emit("info depth 8 nodes 40 score cp 12 pv e2e4 e7e5");
+
+    await expect(opponent).rejects.toMatchObject({ name: "AbortError" });
+    expect(worker.messages).toContain("stop");
+
+    const analysis = broker.analyze({
+      id: "analysis-after-opponent-cancel",
+      fen: initialPosition,
+      perspective: "white",
+      multiPv: 1,
+      limit: { kind: "nodes", nodes: 75 },
+    });
+    await expect
+      .poll(
+        () => worker.messages.filter((message) => message === "isready").length,
+      )
+      .toBeGreaterThanOrEqual(3);
+    worker.emit("readyok");
+    worker.emit("info depth 8 nodes 75 score cp 24 pv e2e4 e7e5");
+    worker.emit("bestmove e2e4");
+
+    await expect(analysis).resolves.toMatchObject({
+      id: "analysis-after-opponent-cancel",
+      lines: [{ moves: ["e2e4", "e7e5"] }],
+    });
+  });
+
   it("publishes normalized progress snapshots before the final result without a second search", async () => {
     const worker = new FakeUciWorker({
       info: [
@@ -381,7 +607,7 @@ describe("UCI worker engine", () => {
     expect(result.backend).toBe("stockfish-wasm");
     expect(worker.messages).toContain("isready");
     expect(worker.messages).toContain(`position fen ${initialPosition}`);
-    expect(worker.messages).toContain("setoption name Skill Level value 2");
+    expect(worker.messages).toContain("setoption name Skill Level value 20");
   });
 
   it("configures the transposition-table hash once during bootstrap", async () => {
@@ -715,6 +941,9 @@ describe("UCI worker engine", () => {
         multiPv: 1,
         limit: { kind: "time", milliseconds: 10 },
       });
+      const rejection = expect(analysis).rejects.toThrow(
+        "Engine analysis timed out",
+      );
 
       await vi.advanceTimersByTimeAsync(500);
       expect(worker.messages.some((message) => message.startsWith("go "))).toBe(
@@ -723,7 +952,7 @@ describe("UCI worker engine", () => {
 
       await vi.advanceTimersByTimeAsync(5000);
 
-      await expect(analysis).rejects.toThrow("Engine analysis timed out");
+      await rejection;
       expect(worker.messages).toContain("stop");
       expect(worker.listenerCount("message")).toBe(0);
       expect(worker.listenerCount("error")).toBe(0);

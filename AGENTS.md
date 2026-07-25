@@ -16,31 +16,77 @@ voces, nombres de entrenadores ni interfaz propietaria de Chess.com.
 
 ## Rol del agente principal
 
-El agente principal es el orquestador. Mantiene el objetivo, toma decisiones
-transversales, asigna propietarios de archivos, integra resultados y realiza la
-validación final. Para tareas con dos o más líneas de trabajo independientes:
+El agente principal usa Sol con razonamiento alto exclusivamente como jefe de
+orquestación. Mantiene el objetivo, define o actualiza el plan y los criterios de
+aceptación, toma decisiones transversales, asigna propietarios de archivos, media
+contradicciones y sintetiza resultados. Sol no escribe código, no edita archivos, no
+genera ni edita imágenes y no ejecuta validaciones rutinarias. Antes de cualquier
+cambio, clasifica el trabajo y selecciona el agente ejecutor más específico de la
+tabla de enrutamiento; conserva el contexto global y delega la ejecución y la
+validación.
+
+Para una sola línea de trabajo, delega en un agente especializado. Usa `fast_worker`
+para cambios inequívocos y mecánicos, e `implementation_worker` para implementación
+general que no pertenezca a otro dominio. Para tareas con dos o más líneas de trabajo
+independientes:
 
 1. Escribe o actualiza un plan antes de implementar.
 2. Delega los bloques independientes a agentes especializados.
 3. No asignes el mismo archivo a dos agentes que trabajen en paralelo.
 4. Espera los resultados, revisa los cambios y resuelve contradicciones.
-5. Ejecuta la validación proporcional al riesgo antes de declarar que terminó.
+5. Encarga la validación proporcional al riesgo al ejecutor o a `qa_evals`, y revisa
+   la evidencia devuelta antes de declarar que terminó.
 
 Usa como máximo cuatro subagentes simultáneos salvo que el usuario solicite otra
-cosa. Los subagentes no deben crear descendientes; la profundidad configurada es 1.
-No delegues cambios triviales ni tareas que dependan secuencialmente unas de otras.
+cosa. Los subagentes no deben crear descendientes; la profundidad permitida es 1.
+Las tareas dependientes deben delegarse en secuencia, pasando un resumen verificado
+entre agentes. No crees varios agentes para una tarea trivial.
+
+### Ciclo mediado de ejecución y revisión
+
+Cada ejecutor entrega un handoff conciso con archivos modificados, criterios cubiertos,
+comandos y resultados, evidencia relevante y riesgos. El orquestador entrega al
+`independent_reviewer` el diff y esa evidencia. El revisor responde exclusivamente
+con `APPROVED`, `NEEDS_CHANGES` con hallazgos accionables, o
+`APPROVED_WITH_CONTINUATION` con una mejora concreta dentro del alcance.
+
+Ante `NEEDS_CHANGES`, el orquestador devuelve los hallazgos al mismo ejecutor mediante
+un follow-up, conservando su propiedad de archivos. El ejecutor corrige, vuelve a
+entregar handoff y se repite la revisión mientras haya evidencia de progreso. Los
+subagentes no crean descendientes ni se transfiere la propiedad de archivos durante
+el ciclo salvo una decisión explícita del orquestador.
+
+No hay un máximo numérico de ciclos. El ciclo termina cuando `APPROVED` y se cumplen
+los criterios y pruebas requeridos; cuando existe un bloqueo que exige al usuario,
+permiso o expansión de alcance; o por estancamiento si reaparece el mismo hallazgo sin
+evidencia de progreso. Una `APPROVED_WITH_CONTINUATION` se ejecuta automáticamente
+solo si la mejora es concreta, medible, segura y está dentro del objetivo original.
+Si amplía el alcance, el orquestador la presenta al usuario.
 
 ## Enrutamiento de subagentes
 
-| Agente                 | Úsalo para                                                            |
-| ---------------------- | --------------------------------------------------------------------- |
-| `repo_explorer`        | Localizar código, dependencias e impacto sin modificar archivos.      |
-| `product_architect`    | PRD, límites de alcance, arquitectura y decisiones transversales.     |
-| `chess_engine`         | UCI, Stockfish/WASM, Web Workers, FEN/PGN, fuerza y rendimiento.      |
-| `coach_designer`       | Métricas, WDL, clasificación, pistas y explicaciones pedagógicas.     |
-| `frontend_builder`     | React, tablero, accesibilidad, PWA y experiencia móvil.               |
-| `qa_evals`             | Tests, fixtures, evaluaciones, rendimiento y criterios de aceptación. |
-| `independent_reviewer` | Revisión final independiente de corrección y regresiones.             |
+| Agente                  | Modelo       | Úsalo para                                                               |
+| ----------------------- | ------------ | ------------------------------------------------------------------------ |
+| `repo_explorer`         | 5.6 Luna     | Localizar código, dependencias e impacto sin modificar archivos.         |
+| `product_architect`     | 5.6 Sol      | PRD, límites de alcance, arquitectura y decisiones transversales.        |
+| `chess_engine`          | GPT-5.4      | Implementar UCI, Stockfish/WASM, Workers, FEN/PGN, fuerza y rendimiento. |
+| `coach_designer`        | 5.6 Terra    | Métricas, WDL, clasificación, pistas y explicaciones pedagógicas.        |
+| `frontend_builder`      | 5.6 Terra    | React, tablero, accesibilidad, PWA y experiencia móvil.                  |
+| `qa_evals`              | 5.6 Luna     | Tests, fixtures, evaluaciones, rendimiento y criterios de aceptación.    |
+| `implementation_worker` | GPT-5.4      | Código acotado que no pertenezca a un especialista de dominio.           |
+| `fast_worker`           | GPT-5.4 mini | Ediciones triviales, mecánicas, documentales o de configuración.         |
+| `visual_asset_worker`   | 5.6 Terra    | Generar o editar imágenes y activos visuales originales del proyecto.    |
+| `independent_reviewer`  | GPT-5.5      | Revisión final independiente de corrección y regresiones.                |
+
+La selección se hace por ajuste entre tarea y rol, no para repartir uso entre
+modelos. Sol solo planifica, define criterios, asigna, media, decide y sintetiza; no
+se asigna como ejecutor. Si una tarea es ambigua o cruza dominios,
+`product_architect` delimita primero los contratos de forma read-only y después
+ejecutan los especialistas afectados. Usa
+`independent_reviewer` tras cambios de alto riesgo, concurrentes, transversales o
+listos para entrega. Si el cliente no ofrece el modelo configurado, conserva el rol,
+elige el modelo disponible más cercano en capacidad y comunica el fallback; el
+repositorio no puede conceder acceso a modelos que la cuenta o la superficie no tenga.
 
 ## Fuente de verdad y documentación
 

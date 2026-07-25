@@ -74,10 +74,20 @@ y qué patrón debe buscar el jugador después. Evita afirmar intenciones que no
 deducirse de la posición.
 
 La revisión posterior usa una voz cercana y serena, pero continúa siendo una
-proyección determinista de evidencia estructurada. Para cada jugada del usuario
-presenta una valoración breve, la consecuencia verificable y la mejor continuación
-con su lógica. Si varias jugadas son equivalentes, debe decirlo en lugar de inventar
-una única solución.
+proyección determinista de evidencia estructurada. El texto visible tiene una o dos
+frases: una etiqueta breve con un motivo verificable y la mejor
+jugada legal; cuando la jugada realizada inicia la PV validada y no tiene una
+etiqueta negativa, lo dice de forma natural y nombra esa misma jugada. Si la
+etiqueta es negativa o se perdió un mate, muestra la advertencia y describe la PV
+sin llamarla «la mejor». Si varias jugadas son equivalentes, debe decirlo en lugar
+de inventar una única solución.
+
+El motivo visible se toma, por este orden, de un cambio de mate, del contexto de una
+posición ya perdida, de un hecho detectado en el tablero o de la relación de la
+jugada con la PV legal validada. No se completa con una explicación posicional
+genérica. Si no hay PV legal, el texto lo declara y no nombra una mejor jugada. Las
+calibraciones desde centipeones se marcan como «estimación» incluso en este formato
+compacto.
 
 El texto visible no contiene identificadores internos de motivos ni convierte la
 pérdida esperada en el centro del mensaje. La evaluación numérica se conserva en el

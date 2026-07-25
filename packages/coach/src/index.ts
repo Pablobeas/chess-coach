@@ -398,21 +398,6 @@ function describeMove(
   return prefix === "Moviste" ? `Moviste ${phrase}` : `mover ${phrase}`;
 }
 
-function recommendationReason(motif: MotifDetection): string {
-  const fact = motif.facts?.find(
-    (candidate) =>
-      candidate.kind === motif.kind ||
-      (motif.kind === "tactical" && candidate.kind === "forced-response"),
-  );
-  if (fact?.detail && motif.kind !== "material")
-    return `${fact.detail.slice(0, 1).toLowerCase()}${fact.detail.slice(1)}`;
-  if (motif.kind === "material")
-    return "conserva un balance material más favorable según la línea principal";
-  if (motif.kind === "neutral")
-    return "la evaluación la prefiere, aunque no hay un motivo táctico único demostrado";
-  return `${bestMoveLogic(motif.kind)}.`;
-}
-
 function trimSentencePunctuation(text: string): string {
   return text.replace(/[.!?]+$/u, "");
 }
@@ -712,204 +697,62 @@ function detectMotif(
   });
 }
 
-function motifReason(motif: MotifDetection): string {
+function compactReason(
+  assessment: MoveAssessment,
+  motif: MotifDetection,
+  bestMove: VerifiedMove | undefined,
+  played: MoveRecord,
+): string {
+  if (assessment.context.mateLost)
+    return "La línea del motor pasa de mate favorable a desfavorable";
+  if (assessment.context.alreadyLost)
+    return "La evaluación ya era muy desfavorable antes de mover";
+
   const fact = motif.facts?.find(
     (candidate) =>
       candidate.kind === motif.kind ||
       (motif.kind === "tactical" && candidate.kind === "forced-response"),
   );
-  if (fact && (motif.kind === "hanging-piece" || motif.kind === "tactical"))
-    return fact.detail;
-  switch (motif.kind) {
-    case "mate":
-      return "La evidencia de mate cambia de favorable a desfavorable.";
-    case "material":
-      return "La captura cambia el material de forma inmediata.";
-    case "hanging-piece":
-      return "Una captura legal inmediata deja la pieza en peligro.";
-    case "tactical":
-      return "La variante legal del motor muestra una consecuencia táctica inmediata.";
-    case "king-safety":
-      return "El jaque obliga al rey rival a responder.";
-    case "threat":
-      return "La posición contiene una amenaza que debe comprobarse antes de continuar.";
-    case "structure":
-      return "La jugada cambia la estructura de peones y las casillas disponibles.";
-    case "development":
-      return "La jugada modifica el desarrollo desde la fila inicial.";
-    case "activity":
-      return "La comparación incluye la movilidad legal de las piezas y sus respuestas disponibles.";
-    case "equivalent":
-      return "Había varias continuaciones con un resultado esperado parecido.";
-    case "neutral":
-      return "No hay un motivo táctico único demostrado; la diferencia es principalmente de preferencia posicional.";
-    case "none":
-      return "No hay un motivo adicional verificable con la evidencia disponible.";
+  if (fact?.detail) return trimSentencePunctuation(fact.detail);
+
+  return bestMove?.uci === played.uci
+    ? assessment.expectedLoss > COACH_CLASSIFICATION_CONFIG.noiseLoss
+      ? "El resultado esperado empeora"
+      : "La PV validada empieza con esta jugada"
+    : "Tu jugada no es la primera de la PV validada";
+}
+
+function labelCopy(label: MoveLabel): string {
+  switch (label) {
+    case "best":
+      return "Correcta";
+    case "brilliant":
+    case "great":
+    case "excellent":
+    case "good":
+      return "Buena";
+    case "inaccuracy":
+      return "Imprecisión";
+    case "mistake":
+      return "Error";
+    case "blunder":
+      return "Error grave";
+    case "miss":
+      return "Oportunidad perdida";
+    case "already-lost":
+      return "Posición difícil";
   }
 }
 
-interface CopyFamily {
-  readonly id: string;
-  readonly naturalAssessment: string;
-}
-
-const COPY_FAMILIES: Readonly<Record<MoveLabel, readonly CopyFamily[]>> =
-  Object.freeze({
-    best: Object.freeze([
-      Object.freeze({
-        id: "best",
-        naturalAssessment:
-          "Has encontrado la mejor continuación según el motor",
-      }),
-    ]),
-    brilliant: Object.freeze([
-      Object.freeze({
-        id: "resource",
-        naturalAssessment: "Has encontrado un recurso especial y preciso",
-      }),
-    ]),
-    great: Object.freeze([
-      Object.freeze({
-        id: "strong",
-        naturalAssessment: "Es una decisión especialmente fuerte",
-      }),
-    ]),
-    excellent: Object.freeze([
-      Object.freeze({
-        id: "steady",
-        naturalAssessment: "Has elegido una continuación serena y sólida",
-      }),
-      Object.freeze({
-        id: "supports",
-        naturalAssessment: "Esta decisión sostiene lo bueno de tu posición",
-      }),
-      Object.freeze({
-        id: "clear",
-        naturalAssessment: "Buena lectura: no entregas una ventaja clara",
-      }),
-    ]),
-    good: Object.freeze([
-      Object.freeze({
-        id: "practical",
-        naturalAssessment: "Es una decisión práctica y suficiente",
-      }),
-      Object.freeze({
-        id: "playable",
-        naturalAssessment: "Tu jugada mantiene una posición jugable",
-      }),
-      Object.freeze({
-        id: "reasonable",
-        naturalAssessment: "Has encontrado una ruta razonable para seguir",
-      }),
-    ]),
-    inaccuracy: Object.freeze([
-      Object.freeze({
-        id: "small-chance",
-        naturalAssessment: "Hay una pequeña oportunidad que se escapa",
-      }),
-      Object.freeze({
-        id: "improvable",
-        naturalAssessment:
-          "Tu idea es comprensible, aunque deja una mejora disponible",
-      }),
-      Object.freeze({
-        id: "resourceful",
-        naturalAssessment:
-          "Es un desvío leve; la posición sigue teniendo recursos",
-      }),
-    ]),
-    mistake: Object.freeze([
-      Object.freeze({
-        id: "uncomfortable",
-        naturalAssessment:
-          "La posición se vuelve más incómoda tras esta jugada",
-      }),
-      Object.freeze({
-        id: "concedes",
-        naturalAssessment: "Esta decisión concede una oportunidad importante",
-      }),
-      Object.freeze({
-        id: "correct",
-        naturalAssessment:
-          "El plan necesita una corrección antes de que la desventaja crezca",
-      }),
-    ]),
-    blunder: Object.freeze([
-      Object.freeze({
-        id: "serious",
-        naturalAssessment:
-          "Esta jugada deja una consecuencia seria en la posición",
-      }),
-      Object.freeze({
-        id: "learning",
-        naturalAssessment:
-          "El cambio es grande, pero aún puede servir para aprender el patrón",
-      }),
-      Object.freeze({
-        id: "resource",
-        naturalAssessment:
-          "Se ha escapado un recurso importante; veamos dónde estaba",
-      }),
-    ]),
-    miss: Object.freeze([
-      Object.freeze({
-        id: "missed-chance",
-        naturalAssessment: "Aquí se escapó una oportunidad importante",
-      }),
-    ]),
-    "already-lost": Object.freeze([
-      Object.freeze({
-        id: "practical",
-        naturalAssessment:
-          "La posición ya era muy difícil antes de esta jugada",
-      }),
-    ]),
-  });
-
-function deterministicIndex(seed: string, length: number): number {
-  let hash = 2_166_136_261;
-  for (const character of seed) {
-    hash = Math.imul(hash ^ character.charCodeAt(0), 16_777_619);
-  }
-  return (hash >>> 0) % length;
-}
-
-function naturalAssessmentSentence(
-  assessment: MoveAssessment,
-  family: CopyFamily,
-): string {
-  return assessment.isEstimated
-    ? `${family.naturalAssessment}; la lectura es una estimación, no una certeza.`
-    : `${family.naturalAssessment}.`;
-}
-
-function bestMoveLogic(motif: MotifKind): string {
-  switch (motif) {
-    case "mate":
-      return "mantiene las amenazas de mate bajo control";
-    case "material":
-      return "cuida el balance material antes de avanzar";
-    case "hanging-piece":
-      return "evita dejar una pieza capturable";
-    case "tactical":
-      return "atiende la secuencia táctica que marca la variante";
-    case "king-safety":
-      return "prioriza la seguridad del rey";
-    case "threat":
-      return "responde a la amenaza más urgente";
-    case "structure":
-      return "mantiene una estructura más estable";
-    case "development":
-      return "mejora el desarrollo sin perder tiempos";
-    case "activity":
-      return "da más actividad a tus piezas";
-    case "none":
-      return "ofrece una referencia legal para comparar";
-    case "equivalent":
-      return "era una de varias continuaciones igual de válidas";
-    case "neutral":
-      return "mantiene una referencia posicional razonable";
-  }
+function mustAvoidBestClaim(assessment: MoveAssessment): boolean {
+  return (
+    assessment.context.mateLost ||
+    assessment.label === "inaccuracy" ||
+    assessment.label === "mistake" ||
+    assessment.label === "blunder" ||
+    assessment.label === "miss" ||
+    assessment.label === "already-lost"
+  );
 }
 
 function formatVariationPhrases(
@@ -937,31 +780,28 @@ function makeCopy(
   assessment: MoveAssessment,
   motif: MotifDetection,
   bestMove: VerifiedMove | undefined,
-  ply: number,
 ): CoachCopy {
-  const families = COPY_FAMILIES[assessment.label];
-  const family =
-    families[
-      deterministicIndex(
-        `${ply}|${played.uci}|${assessment.label}|${motif.kind}`,
-        families.length,
-      )
-    ]!;
-  const playedDescription = describeMove(before.fen, played, "Moviste");
-  const playedEvidence = `${playedDescription}; ${trimSentencePunctuation(motifReason(motif))}.`;
-  const reason = bestMove
-    ? trimSentencePunctuation(recommendationReason(motif))
-    : "";
-  const bestSentence =
-    bestMove && bestMove.uci === played.uci
-      ? `La línea principal coincide con esta jugada y ${reason}.`
-      : bestMove
-        ? `La mejor alternativa era ${describeMove(before.fen, bestMove, "mover")}: ${reason}.`
-        : "No se pudo verificar una alternativa legal; conviene repetir el análisis.";
+  const uncertainty = assessment.isEstimated ? " (estimación)" : "";
+  const bestStatus =
+    bestMove === undefined
+      ? "unverified"
+      : bestMove.uci === played.uci
+        ? "played"
+        : "alternative";
+  const playedBestButNegative =
+    bestMove?.uci === played.uci && mustAvoidBestClaim(assessment);
+  const text =
+    bestMove === undefined
+      ? `Sin una PV legal verificable, no hay una mejor jugada que mostrar${uncertainty}.`
+      : playedBestButNegative
+        ? `${labelCopy(assessment.label)}${uncertainty}: ${compactReason(assessment, motif, bestMove, played)}. La línea validada empieza con ${describeMove(before.fen, bestMove, "mover")}.`
+        : bestMove.uci === played.uci
+          ? `Es la mejor jugada${uncertainty}: ${describeMove(before.fen, bestMove, "mover")}. ${compactReason(assessment, motif, bestMove, played)}.`
+          : `${labelCopy(assessment.label)}${uncertainty}: ${compactReason(assessment, motif, bestMove, played)}. Mejor: ${describeMove(before.fen, bestMove, "mover")}.`;
   return Object.freeze({
     locale: "es",
-    templateId: `turn-v4-${assessment.label}-${motif.kind}-${family.id}-${bestMove ? "best" : "unverified"}`,
-    text: `${naturalAssessmentSentence(assessment, family)} ${playedEvidence} ${bestSentence}`,
+    templateId: `turn-v5-${assessment.label}-${motif.kind}-${bestStatus}`,
+    text,
   });
 }
 
@@ -1070,14 +910,7 @@ export function analyzeTurn(
   const copy =
     assessment === undefined
       ? undefined
-      : makeCopy(
-          before,
-          played,
-          assessment,
-          motif,
-          bestMove,
-          after.history.length,
-        );
+      : makeCopy(before, played, assessment, motif, bestMove);
   const hints =
     assessment === undefined
       ? Object.freeze([])

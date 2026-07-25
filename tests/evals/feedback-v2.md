@@ -24,6 +24,12 @@ deterministas); nunca se compara un número exacto de centipeones de Stockfish.
 - La calidad (`quality`) solo se calcula para jugadas del usuario. Las jugadas
   del motor pueden aportar contexto, pero no penalizan ni mejoran la puntuación
   del usuario.
+- El copy visible del entrenador tiene una o dos frases: motivo comprobable
+  y mejor jugada legal. Si `userMove` inicia la PV validada, debe nombrarla como
+  la mejor jugada salvo que tenga una etiqueta negativa o pierda un mate; en ese
+  caso describe la PV sin llamarla mejor. Sin PV legal, debe declarar esa ausencia
+  y no inventar una alternativa. Las conversiones desde centipeones se marcan como
+  estimación.
 - Las pistas son progresivas: objetivo → pieza/zona → movimiento concreto; no se
   revela el movimiento en el primer nivel.
 

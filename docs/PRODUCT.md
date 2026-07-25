@@ -1,5 +1,12 @@
 # Producto
 
+## Líneas de prueba
+
+La partida principal puede convivir con hasta cinco líneas de prueba locales. Cada
+prueba conserva historial, cursor, feedback y anotaciones, y no cambia la principal
+hasta una promoción explícita. Las estadísticas, el resumen y la exportación usan la
+principal hasta esa promoción.
+
 ## Problema
 
 Jugar contra un motor tradicional dice poco sobre por qué una jugada funciona.

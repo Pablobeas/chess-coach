@@ -1,5 +1,9 @@
 # Arquitectura
 
+`SessionWorkspace` v6 guarda `mainLineId`, `activeLineId`, revisión e independientes
+líneas con timeline/cursor, feedback, anotaciones y metadatos de bifurcación. La
+migración v5 convierte la sesión activa en principal y `RecoverySnapshot` en prueba.
+
 ## Vista general
 
 ```text
@@ -35,16 +39,22 @@ reglas para evitar que detalles de terceros se propaguen por toda la aplicación
 ### `packages/engine`
 
 Expone contratos asíncronos y cancelables separados para análisis y oponente. El
-adaptador de Stockfish vive en un Web Worker. El adaptador de Maia-3 llama al companion
-local por HTTP loopback y nunca expone texto UCI a React. Ambos asignan identificadores
-y la UI descarta respuestas antiguas. El presupuesto de análisis se expresa por
-tiempo/nodos y se adapta al dispositivo.
+adaptador de Stockfish vive en un Web Worker y valida toda salida UCI antes de
+normalizarla. En navegador hosted o estático, el mismo broker Stockfish local cubre
+análisis y rival para no depender de `/maia3-api`; serializa búsquedas, restaura las
+opciones UCI por actor y drena `stop`/`readyok` antes de reutilizar el Worker. El
+adaptador de Maia-3 llama al companion local por HTTP loopback y nunca expone texto
+UCI a React. Todos los backends asignan identificadores y la UI descarta respuestas
+antiguas. El presupuesto de análisis se expresa por tiempo/nodos y el hash de
+Stockfish se adapta al dispositivo con escalones de 16/32/64 MB.
 
 El companion no publica su estado `ready` hasta completar el handshake UCI, cargar el
-modelo y obtener una jugada legal de calentamiento. Por tanto, `play` abre la interfaz
-solo cuando la primera inferencia real ya terminó. Un fallo posterior conserva la FEN y
-el historial: el usuario puede reintentar con un identificador nuevo, mientras la UI
-descarta cualquier respuesta perteneciente a la solicitud anterior.
+modelo y obtener una jugada legal de calentamiento. Por tanto, `pnpm dev` y `play`
+solo exponen la interfaz cuando la primera inferencia real ya terminó. El lanzador
+elige puertos locales libres para la web y para el bridge, inyecta ese destino real en
+Vite y cierra ambos procesos juntos. Un fallo posterior conserva la FEN y el historial:
+el usuario puede reintentar con un identificador nuevo, mientras la UI descarta
+cualquier respuesta perteneciente a la solicitud anterior.
 
 ### `packages/coach`
 
@@ -80,9 +90,11 @@ posición resultante basta la variante principal. Las líneas `info` se validan 
 de forma sintáctica y acotada; la reproducción legal completa se realiza una sola vez
 sobre las variantes finales antes de publicar el resultado.
 
-Stockfish configura una tabla de transposición de 64 MB una sola vez durante el
-handshake UCI. La tabla no se limpia entre búsquedas, de modo que las posiciones
-repetidas pueden reutilizar trabajo sin cambiar `movetime`, `MultiPV` ni la fuerza.
+Stockfish configura la tabla de transposición una sola vez durante el handshake UCI.
+El valor objetivo es 64 MB, pero en dispositivos lentos baja a 32 o 16 MB según la
+memoria expuesta y la concurrencia disponible. La tabla no se limpia entre búsquedas,
+de modo que las posiciones repetidas pueden reutilizar trabajo sin cambiar `movetime`,
+`MultiPV` ni la fuerza del análisis pedagógico.
 
 ## Secuencia tras una jugada
 
@@ -128,6 +140,12 @@ La escala procede de partidas Lichess Blitz y no representa una equivalencia exa
 con FIDE o Chess.com. El companion escucha solo en `127.0.0.1`, procesa las solicitudes
 en serie y el cliente vuelve a validar la legalidad de cada `bestmove` contra el FEN
 actual antes de aplicarlo.
+
+En navegador hosted o móvil sin companion, Stockfish local asume también el papel de
+`opponent`. El broker reutiliza el mismo Worker del análisis, pero aplica una
+configuración limitada y aproximada para el rival: tiempo breve, `MultiPV` corto y, si
+el motor lo soporta, `UCI_LimitStrength`/`UCI_Elo`; si no, degrada con `Skill Level`.
+Antes de volver a una búsqueda pedagógica restablece la fuerza completa del análisis.
 
 ## Persistencia
 

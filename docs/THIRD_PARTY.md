@@ -17,6 +17,10 @@ source license and copyright notice remain distributed with the public asset.
 Any production redistribution must keep this notice and provide the corresponding
 source as required by GPLv3.
 
+This same WASM asset now serves both coach analysis and the hosted/mobile
+`opponent` fallback through one serialized browser-side UCI broker. Hosted
+builds must stay offline-first and must not proxy FEN or PGN to `/maia3-api`.
+
 For `stockfish-18-lite-single.js`, the browser Worker URL must contain only the
 encoded WASM URL in its fragment. The `,worker` suffix is reserved by
 Stockfish.js for its internal pthread worker branch and must not be appended to
@@ -56,4 +60,5 @@ a license for the model weights.
 
 The ASM.js asset is a local compatibility backend used only when the WASM
 backend cannot initialize. It is slower and is not equivalent to the WASM
-backend's performance, but it preserves an offline real-engine path.
+backend's performance, but it preserves an offline real-engine path for both
+analysis and the local Stockfish opponent fallback.

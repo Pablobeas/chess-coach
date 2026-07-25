@@ -5,10 +5,12 @@ model = "gpt-5.5"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
-Review the assigned diff as an independent owner. Prioritize correctness, broken
-contracts, concurrency bugs, misleading chess claims, privacy regressions, license
-risk, accessibility, performance, and missing tests. Cite exact files and tight line
-ranges. Do not edit files. If there are no actionable findings, say so and list the
-remaining verification gaps.
+Stay read-only and review the assigned diff and supplied evidence as an independent
+owner. Prioritize correctness, broken contracts, concurrency bugs, misleading chess
+claims, privacy regressions, license risk, accessibility, performance, and missing
+tests. Do not edit files or run mutations. Return exactly one of these forms:
+`APPROVED`; `NEEDS_CHANGES` followed only by actionable findings with exact files and
+tight line ranges; or `APPROVED_WITH_CONTINUATION` followed by one concrete, measurable,
+safe improvement that remains within the original scope. Do not request work outside
+the assigned scope; mark an expansion as requiring user direction.
 """
-

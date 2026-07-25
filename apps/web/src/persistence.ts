@@ -10,6 +10,11 @@ import type {
   MoveLabel,
 } from "@chess-coach/coach";
 import { normalizeCoachTurnRecord } from "@chess-coach/coach";
+import {
+  createSessionWorkspace,
+  type SessionLine,
+  type SessionWorkspace,
+} from "./sessionWorkspace";
 
 export type HelpLevel = "none" | "normal" | "guided";
 
@@ -46,9 +51,10 @@ export interface RecoverySnapshot {
 }
 
 export interface StoredGame {
-  readonly version: 5;
+  readonly version: 6;
   readonly settings: GameSettings;
-  /** Complete line, including moves after the currently viewed position. */
+  readonly workspace: SessionWorkspace;
+  /** Compatibility projection of the current main line. */
   readonly session: GameSession;
   readonly cursor: number;
   readonly annotations: readonly MoveQualityAnnotation[];
@@ -290,7 +296,14 @@ export function loadStoredGame(
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
-    const candidate = parsed as Partial<StoredGame> & { version?: number };
+    const candidate = parsed as Partial<StoredGame> & {
+      version?: number;
+      session?: GameSession;
+      cursor?: number;
+      annotations?: readonly MoveQualityAnnotation[];
+      feedbackByPly?: readonly MoveFeedbackRecord[];
+      recovery?: RecoverySnapshot;
+    };
     const version = (candidate as { version?: number }).version;
     const settings = normalizeGameSettings(candidate.settings);
     if (
@@ -298,11 +311,35 @@ export function loadStoredGame(
         version !== 2 &&
         version !== 3 &&
         version !== 4 &&
-        version !== 5) ||
-      !settings ||
-      !isSessionShape(candidate.session)
+        version !== 5 &&
+        version !== 6) ||
+      !settings
     )
       return null;
+    if (version === 6) {
+      const workspace = parseWorkspace(candidate.workspace);
+      if (!workspace) return null;
+      const main = workspace.lines.find(
+        (line) => line.id === workspace.mainLineId,
+      )!;
+      const recovery =
+        candidate.recovery === undefined
+          ? undefined
+          : parseRecoverySnapshot(candidate.recovery);
+      if (recovery === null) return null;
+      return {
+        version: 6,
+        settings,
+        workspace,
+        session: main.timeline.session,
+        cursor: main.timeline.cursor,
+        annotations: main.annotations,
+        feedbackByPly: main.feedbackByPly,
+        ...(recovery === undefined ? {} : { recovery }),
+        savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : "",
+      };
+    }
+    if (!isSessionShape(candidate.session)) return null;
     const session = candidate.session as GameSession;
     const annotations = Array.isArray(candidate.annotations)
       ? candidate.annotations.filter(isMoveQualityAnnotation)
@@ -358,13 +395,39 @@ export function loadStoredGame(
           : record,
       ),
     );
-    return {
-      version: 5,
-      settings,
-      session,
-      cursor,
+    const main = createSessionWorkspace(session);
+    const migratedMain: SessionLine = {
+      ...main.lines[0]!,
+      timeline: { session, cursor },
       annotations: validAnnotations(session, annotations),
       feedbackByPly: Object.freeze(persistedFeedback),
+    };
+    const trial =
+      recovery === undefined || recovery === null
+        ? []
+        : [
+            {
+              id: "trial-1",
+              timeline: { session: recovery.session, cursor: recovery.cursor },
+              annotations: recovery.annotations,
+              feedbackByPly: recovery.feedbackByPly,
+              fork: { lineId: "main", ply: recovery.cursor },
+              revision: 0,
+            } satisfies SessionLine,
+          ];
+    const workspace = {
+      ...main,
+      lines: [migratedMain, ...trial],
+      activeLineId: trial.length ? "trial-1" : "main",
+    };
+    return {
+      version: 6,
+      settings,
+      workspace,
+      session,
+      cursor,
+      annotations: migratedMain.annotations,
+      feedbackByPly: migratedMain.feedbackByPly,
       ...(recovery === undefined || recovery === null ? {} : { recovery }),
       savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : "",
     };
@@ -374,33 +437,171 @@ export function loadStoredGame(
 }
 
 export function saveStoredGame(
-  session: GameSession,
+  workspace: SessionWorkspace | GameSession,
   settings: GameSettings,
   storage: Storage = localStorage,
   annotations: readonly MoveQualityAnnotation[] = [],
   feedbackByPly: readonly MoveFeedbackRecord[] = [],
-  cursor = session.history.length,
+  cursor?: number,
   recovery?: RecoverySnapshot,
 ): void {
-  if (
-    !Number.isInteger(cursor) ||
-    cursor < 0 ||
-    cursor > session.history.length
-  )
-    throw new RangeError("The saved cursor must be within the game history");
-  if (recovery !== undefined && parseRecoverySnapshot(recovery) === null)
-    throw new RangeError("The recovery snapshot is invalid");
+  const normalizedWorkspace: SessionWorkspace =
+    "version" in workspace
+      ? workspace
+      : (() => {
+          const base = createSessionWorkspace(workspace);
+          const main = base.lines[0]!;
+          const mainLine = {
+            ...main,
+            timeline: {
+              session: workspace,
+              cursor: cursor ?? workspace.history.length,
+            },
+            annotations,
+            feedbackByPly,
+          };
+          const trial =
+            recovery === undefined
+              ? []
+              : [
+                  {
+                    id: "trial-1",
+                    timeline: {
+                      session: recovery.session,
+                      cursor: recovery.cursor,
+                    },
+                    annotations: recovery.annotations,
+                    feedbackByPly: recovery.feedbackByPly,
+                    fork: { lineId: "main", ply: recovery.cursor },
+                    revision: 0,
+                  } satisfies SessionLine,
+                ];
+          return {
+            ...base,
+            lines: [mainLine, ...trial],
+            activeLineId: trial.length ? "trial-1" : "main",
+          };
+        })();
+  const main = normalizedWorkspace.lines.find(
+    (line) => line.id === normalizedWorkspace.mainLineId,
+  )!;
   const stored: StoredGame = {
-    version: 5,
-    session,
+    version: 6,
     settings,
-    cursor,
-    annotations: validAnnotations(session, annotations),
-    feedbackByPly: validFeedback(session, feedbackByPly),
+    workspace: normalizeWorkspace(normalizedWorkspace),
+    session: main.timeline.session,
+    cursor: main.timeline.cursor,
+    annotations: main.annotations,
+    feedbackByPly: main.feedbackByPly,
     ...(recovery === undefined ? {} : { recovery }),
     savedAt: new Date().toISOString(),
   };
   storage.setItem(STORAGE_KEY, JSON.stringify(stored));
+}
+
+function parseWorkspace(value: unknown): SessionWorkspace | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<SessionWorkspace>;
+  if (
+    candidate.version !== 6 ||
+    !Array.isArray(candidate.lines) ||
+    typeof candidate.mainLineId !== "string" ||
+    typeof candidate.activeLineId !== "string" ||
+    !Number.isInteger(candidate.revision) ||
+    candidate.lines.length < 1 ||
+    candidate.lines.length > 6
+  )
+    return null;
+  const ids = new Set<string>();
+  const lines: SessionLine[] = [];
+  for (const raw of candidate.lines) {
+    if (!raw || typeof raw !== "object") continue;
+    const line = raw as Partial<SessionLine>;
+    if (
+      typeof line.id !== "string" ||
+      !line.id ||
+      ids.has(line.id) ||
+      !line.timeline ||
+      !isSessionShape(line.timeline.session) ||
+      !validCursor(line.timeline.session, line.timeline.cursor) ||
+      !Array.isArray(line.annotations) ||
+      !Array.isArray(line.feedbackByPly) ||
+      !Number.isInteger(line.revision)
+    ) {
+      if (line.id === candidate.mainLineId) return null;
+      continue;
+    }
+    if (
+      line.fork !== undefined &&
+      (!line.fork ||
+        typeof line.fork.lineId !== "string" ||
+        !Number.isInteger(line.fork.ply) ||
+        line.fork.ply < 0)
+    ) {
+      if (line.id === candidate.mainLineId) return null;
+      continue;
+    }
+    const timeline = line.timeline;
+    const revision = line.revision;
+    if (!timeline || revision === undefined) {
+      if (line.id === candidate.mainLineId) return null;
+      continue;
+    }
+    ids.add(line.id);
+    lines.push({
+      id: line.id,
+      timeline: { session: timeline.session, cursor: timeline.cursor },
+      annotations: validAnnotations(
+        timeline.session,
+        line.annotations.filter(isMoveQualityAnnotation),
+      ),
+      feedbackByPly: normalizeVisibleFeedback(
+        validFeedback(
+          timeline.session,
+          line.feedbackByPly.filter(isMoveFeedbackRecord),
+        ).map((record) =>
+          record.status === "pending"
+            ? { ...record, status: "unavailable" as const }
+            : record,
+        ),
+      ),
+      ...(line.fork === undefined ? {} : { fork: line.fork }),
+      revision,
+      ...(line.promotionPromptShown === true
+        ? { promotionPromptShown: true }
+        : {}),
+    });
+  }
+  if (!ids.has(candidate.mainLineId)) return null;
+  const activeLineId = ids.has(candidate.activeLineId)
+    ? candidate.activeLineId
+    : candidate.mainLineId;
+  const main = lines.find((line) => line.id === candidate.mainLineId)!;
+  if (
+    main.fork !== undefined ||
+    lines
+      .filter((line) => line.id !== main.id)
+      .some(
+        (line) =>
+          !line.fork ||
+          !ids.has(line.fork.lineId) ||
+          line.fork.ply > line.timeline.session.history.length,
+      )
+  )
+    return null;
+  return {
+    version: 6,
+    mainLineId: candidate.mainLineId,
+    activeLineId,
+    revision: candidate.revision!,
+    lines,
+  };
+}
+
+function normalizeWorkspace(workspace: SessionWorkspace): SessionWorkspace {
+  const parsed = parseWorkspace(workspace);
+  if (!parsed) throw new RangeError("The session workspace is invalid");
+  return parsed;
 }
 
 export function clearStoredGame(storage: Storage = localStorage): void {

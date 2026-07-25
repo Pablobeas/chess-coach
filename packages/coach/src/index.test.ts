@@ -178,7 +178,7 @@ describe("coach turn records", () => {
     expect(record.motif.kind).toBeDefined();
     expect(
       record.copy?.text.split(/[.!?](?:\s|$)/).filter(Boolean),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     expect(record.hints.map((hint) => hint.level)).toEqual([1, 2, 3]);
     expect(record.hints[1]?.text).toBe("Revisa el peón e2-e4.");
     expect(record.hints[2]?.text).toBe("Prueba el peón e2-e4.");
@@ -302,7 +302,7 @@ describe("coach turn records", () => {
     expect(record.copy?.text).toContain("capturable");
   });
 
-  it("explains the played move and the legal alternative with origin and destination", () => {
+  it("keeps visible feedback compact while naming the verified alternative", () => {
     const before = createInitialGame();
     const after = applyMove(before, { from: "a2", to: "a3" });
     const record = analyzeTurn(
@@ -312,14 +312,37 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -100 }, ["e7e5"]),
     );
 
-    expect(record.copy?.text).toContain("Moviste el peón a2-a3");
-    expect(record.copy?.text).toContain(
-      "La mejor alternativa era mover el peón e2-e4",
+    expect(record.copy?.text).toBe(
+      "Error (estimación): Tu jugada no es la primera de la PV validada. Mejor: mover el peón e2-e4.",
     );
-    expect(record.copy?.text).not.toContain("La alternativa e4");
     expect(record.evidence.alternativeMove).toMatchObject({
       uci: "e2e4",
       san: "e4",
+    });
+  });
+
+  it("uses the same compact contract for good, inaccurate, mistaken, and blunder moves", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "a2", to: "a3" });
+    const cases = [
+      { afterScore: 40, label: "good", prefix: "Buena" },
+      { afterScore: 0, label: "inaccuracy", prefix: "Imprecisión" },
+      { afterScore: -100, label: "mistake", prefix: "Error" },
+      { afterScore: -500, label: "blunder", prefix: "Error grave" },
+    ] as const;
+
+    cases.forEach(({ afterScore, label, prefix }) => {
+      const record = analyzeTurn(
+        before,
+        after,
+        line({ kind: "centipawns", value: 100 }, ["e2e4"]),
+        line({ kind: "centipawns", value: afterScore }, ["e7e5"]),
+      );
+
+      expect(record.assessment?.label).toBe(label);
+      expect(record.copy?.text).toBe(
+        `${prefix} (estimación): Tu jugada no es la primera de la PV validada. Mejor: mover el peón e2-e4.`,
+      );
     });
   });
 
@@ -356,7 +379,7 @@ describe("coach turn records", () => {
 
     expect(record.assessment?.context.equivalent).toBe(true);
     expect(record.motif.kind).toBe("equivalent");
-    expect(record.copy?.text).toContain("varias continuaciones");
+    expect(record.copy?.text).toContain("Hay más de una continuación");
   });
 
   it("classifies a missed winning opportunity separately", () => {
@@ -375,6 +398,9 @@ describe("coach turn records", () => {
     );
     expect(invalidPv.evidence.bestMove).toBeUndefined();
     expect(invalidPv.copy?.text).not.toContain("a1");
+    expect(invalidPv.copy?.text).toBe(
+      "Sin una PV legal verificable, no hay una mejor jugada que mostrar (estimación).",
+    );
 
     const maia = analyzeTurn(
       before,
@@ -412,11 +438,9 @@ describe("coach turn records", () => {
     expect(user.assessment?.calibration.perspective).toBe("white");
   });
 
-  it("selects warm copy templates deterministically and varies them across turn context", () => {
+  it("uses a deterministic two-sentence format grounded in validated evidence", () => {
     const first = createInitialGame();
     const e4 = applyMove(first, { from: "e2", to: "e4" });
-    const d4 = applyMove(first, { from: "d2", to: "d4" });
-    const e5 = applyMove(e4, { from: "e7", to: "e5" });
     const e4Record = analyzeTurn(
       first,
       e4,
@@ -429,37 +453,41 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: 10 }, ["e2e4"]),
       line({ kind: "centipawns", value: -80 }, ["e7e5"]),
     );
-    const variants = [
-      e4Record,
-      analyzeTurn(
-        first,
-        d4,
-        line({ kind: "centipawns", value: 10 }, ["d2d4"]),
-        line({ kind: "centipawns", value: -80 }, ["d7d5"]),
-      ),
-      analyzeTurn(
-        e4,
-        e5,
-        line({ kind: "centipawns", value: 10 }, ["e7e5"]),
-        line({ kind: "centipawns", value: -80 }, ["g1f3"]),
-      ),
-    ];
-
     expect(e4Record.copy).toEqual(repeat.copy);
-    expect(
-      new Set(variants.map((record) => record.copy?.templateId)).size,
-    ).toBeGreaterThan(1);
-    expect(
-      new Set(variants.map((record) => record.copy?.text)).size,
-    ).toBeGreaterThan(1);
-    variants.forEach((record) => {
+    expect(e4Record.copy?.templateId).toBe("turn-v5-inaccuracy-neutral-played");
+    expect(e4Record.copy?.text).toBe(
+      "Imprecisión (estimación): El resultado esperado empeora. La línea validada empieza con mover el peón e2-e4.",
+    );
+  });
+
+  it("keeps mate and already-lost copy honest about the engine evidence", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const mate = analyzeTurn(
+      before,
+      after,
+      line({ kind: "mate", moves: 3 }, ["e2e4"]),
+      line({ kind: "mate", moves: -2 }, ["e7e5"]),
+    );
+    const alreadyLost = analyzeTurn(
+      before,
+      after,
+      line({ kind: "centipawns", value: -1200 }, ["e2e4"]),
+      line({ kind: "centipawns", value: -1300 }, ["e7e5"]),
+    );
+
+    expect(mate.copy?.text).toBe(
+      "Error grave: La línea del motor pasa de mate favorable a desfavorable. La línea validada empieza con mover el peón e2-e4.",
+    );
+    expect(alreadyLost.copy?.text).toContain(
+      "La evaluación ya era muy desfavorable antes de mover.",
+    );
+    expect(alreadyLost.copy?.text).toContain("(estimación)");
+    [mate, alreadyLost].forEach((record) =>
       expect(
         record.copy?.text.split(/[.!?](?:\s|$)/).filter(Boolean).length,
-      ).toBeGreaterThanOrEqual(2);
-      expect(
-        record.copy?.text.split(/[.!?](?:\s|$)/).filter(Boolean).length,
-      ).toBeLessThanOrEqual(3);
-    });
+      ).toBe(2),
+    );
   });
 
   it("keeps the legacy adapter usable while exposing the complete record", () => {

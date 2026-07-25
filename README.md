@@ -16,12 +16,16 @@ necesita además Python 3.10–3.12 y Git.
 
 ```powershell
 pnpm install
-.\play.ps1
+pnpm dev
 ```
 
-`pnpm dev` inicia únicamente la interfaz Vite para desarrollo. Para jugar una partida
-completa debe usarse `play.ps1` (o el comando global `play` descrito debajo), que prepara
-y arranca también el companion local de Maia-3 antes de abrir la web.
+`pnpm dev` prepara Maia-3 local, espera a que `/health` confirme una inferencia de
+calentamiento real y arranca Vite con el proxy apuntando al puerto correcto del bridge.
+El comando elige el primer puerto libre para la web empezando por `5173` y muestra la
+URL activa en consola. Al cerrar el proceso se detienen juntos Vite y el companion local.
+
+Si prefieres abrir el navegador automáticamente, usa `play.ps1` o el comando global
+`play` descrito debajo.
 
 En esta máquina también está instalado el comando global `play`. Puede ejecutarse
 desde cualquier carpeta de PowerShell:
@@ -30,12 +34,12 @@ desde cualquier carpeta de PowerShell:
 play
 ```
 
-`play` prepara el companion local de Maia-3, cierra únicamente procesos anteriores
-de este proyecto, fuerza una reconstrucción de desarrollo, inicia la última versión
-en `http://127.0.0.1:5173` y abre el navegador automáticamente. La primera ejecución
+`play` usa el mismo lanzador que `pnpm dev`, abre el navegador automáticamente y reutiliza
+la URL real elegida por Vite. La primera ejecución
 instala Maia-3 y PyTorch en `.runtime/maia3` (aprox. 750 MB) y descarga el checkpoint
 5M (aprox. 21 MB); las siguientes partidas funcionan sin conexión. Si un puerto
-pertenece a otro programa, el lanzador se detiene en lugar de cerrar un proceso ajeno.
+pertenece a otro programa, el lanzador elige otro puerto local libre en lugar de cerrar
+un proceso ajeno.
 
 El Elo configurado para Maia-3 está calibrado sobre partidas Lichess Blitz. Es una
 referencia de estilo de juego, no una equivalencia directa con Elo FIDE o Chess.com.
@@ -60,9 +64,16 @@ chess_engine para la implementación y qa_evals para diseñar las pruebas.
 Espera a ambos y pasa el resultado a independent_reviewer antes de terminar.
 ```
 
-El agente principal usa `gpt-5.6-sol`. Los especialistas usan Terra o Luna según
-la carga y el revisor independiente usa GPT-5.5. Consulta `AGENTS.md` para el
-enrutamiento y `docs/ROADMAP.md` para el orden de construcción.
+El agente principal usa `gpt-5.6-sol` exclusivamente como jefe: planifica, define
+criterios, asigna, media y sintetiza, pero no implementa ni genera activos. La ejecución
+se delega al rol más específico: `chess_engine` usa GPT-5.4, Terra cubre frontend,
+coaching y activos visuales originales, Luna explora y prueba, y GPT-5.5 revisa.
+Después de cada entrega, el orquestador pasa el diff y la evidencia al revisor y devuelve
+los hallazgos al mismo ejecutor mediante follow-up hasta aprobar, bloquearse o estancarse.
+Una continuación aprobada solo se ejecuta automáticamente si es concreta, medible, segura
+y no amplía el objetivo. La disponibilidad efectiva sigue dependiendo de la cuenta y del
+cliente de Codex. Abre una sesión nueva tras cambiar `.codex/` y consulta `AGENTS.md` para
+el enrutamiento.
 
 Skills globales recomendadas para este repositorio: `find-skills`,
 `vercel-react-best-practices`, `accessibility`, `playwright`,

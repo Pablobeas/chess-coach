@@ -34,7 +34,10 @@ import { GameSetup } from "./GameSetup";
 import { createBrowserStockfishEngine } from "./engineClient";
 import { coachSearchPlan } from "./coachSearchPlan";
 import { prewarmCoachPosition } from "./coachPrewarm";
-import { createLocalMaia3Opponent } from "./maia3Client";
+import {
+  createBrowserOpponentEngine,
+  getSharedBrowserStockfishController,
+} from "./opponentClient";
 import { disposeEngineRef } from "./engineLifecycle";
 import {
   createMoveAnimation,
@@ -63,7 +66,6 @@ import {
   saveStoredGame,
   type MoveQualityAnnotation,
   type MoveFeedbackRecord,
-  type RecoverySnapshot,
   type GameSettings,
 } from "./persistence";
 import {
@@ -76,12 +78,42 @@ import {
 } from "./progressiveMoveQuality";
 import { createSerialTaskQueue } from "./serialTaskQueue";
 import {
-  continueNavigationFromCursor,
+  AlternativePreparationBar,
+  PromotionSuggestion,
+  WorkspaceLinePanel,
+} from "./SessionWorkspaceControls";
+import {
   createNavigationTimeline,
   moveNavigationCursor,
   replaceNavigationLine,
   sessionAtNavigationCursor,
 } from "./navigationTimeline";
+import {
+  activeSessionLine,
+  createSessionWorkspace,
+  createTrialLine,
+  deleteSessionLine,
+  dismissPromotionPrompt,
+  navigateSessionLine,
+  promoteSessionLine,
+  selectSessionLine,
+  shouldPromptPromotion,
+  updateActiveSessionLine,
+  type SessionWorkspace,
+} from "./sessionWorkspace";
+import {
+  acceptsAnalysisResult,
+  continueMoveFromCursor,
+  clearProvisionalForLineChange,
+  createAnalysisRequestIdentity,
+  exportSessionForWorkspace,
+} from "./lineTransitions";
+import {
+  activateWaitingServiceWorker,
+  getWaitingServiceWorker,
+  PWA_UPDATE_EVENT,
+  subscribeToVersionChecks,
+} from "./pwaUpdate";
 
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
@@ -91,6 +123,27 @@ type PositionNotice = {
 };
 const colorName = (color: PlayerColor) =>
   color === "white" ? "blancas" : "negras";
+const isDesktopLocalhost = () =>
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+export const opponentNameForBackend = (backend?: string) =>
+  backend === "maia3-local" || (backend === undefined && isDesktopLocalhost())
+    ? "Maia-3 local"
+    : "Stockfish local";
+export const browserOpponentModeForBuild = (isProduction: boolean) =>
+  isProduction ? ("hosted" as const) : ("auto" as const);
+export const browserOpponentMode = () =>
+  browserOpponentModeForBuild(import.meta.env.PROD);
+export const initialOpponentNameForMode = (mode = browserOpponentMode()) =>
+  mode === "hosted" ? "Stockfish local" : "Maia-3 local";
+export function readCurrentBuildId(
+  documentRef: Document = document,
+): string | undefined {
+  const value = documentRef
+    .querySelector('meta[name="chess-coach-build-id"]')
+    ?.getAttribute("content");
+  return value && value !== "__CHESS_COACH_BUILD_ID__" ? value : undefined;
+}
 const qualityMeta: Record<
   MoveLabel,
   { readonly icon: string; readonly label: string; readonly className: string }
@@ -299,21 +352,21 @@ function AdvicePanel({
                 className="secondary"
                 onClick={onToggleLine}
               >
-                {lineVisible ? "Ocultar línea" : "Mostrar línea"}
+                {lineVisible ? "Ocultar variante" : "Ver variante"}
               </button>
             ) : null}
             {feedback.turn.actor === "user" &&
             feedback.evidence.bestMove &&
             feedback.evidence.bestMove.uci !== feedback.turn.playedUci ? (
               <button type="button" onClick={onRetry}>
-                Probar alternativa
+                Probar otra jugada
               </button>
             ) : null}
           </div>
           {lineVisible && displayedLine.length ? (
             <ol
               className="feedback-line"
-              aria-label="Línea principal verificada"
+              aria-label="Variante recomendada verificada"
             >
               {displayedLine.map((move, index) => (
                 <li key={`${move}-${index}`}>{move}</li>
@@ -356,24 +409,25 @@ function AdvicePanel({
 }
 
 function getRecoveredState(): {
-  readonly session: GameSession;
+  readonly workspace: SessionWorkspace;
   readonly settings: GameSettings;
-  readonly annotations: readonly MoveQualityAnnotation[];
-  readonly feedbackByPly: readonly MoveFeedbackRecord[];
-  readonly cursor: number;
-  readonly recovery?: RecoverySnapshot;
 } | null {
   if (typeof window === "undefined") return null;
   const stored = loadStoredGame(window.localStorage);
   if (!stored) return null;
   try {
     return {
-      session: restoreSession(stored.session),
+      workspace: {
+        ...stored.workspace,
+        lines: stored.workspace.lines.map((line) => ({
+          ...line,
+          timeline: {
+            ...line.timeline,
+            session: restoreSession(line.timeline.session),
+          },
+        })),
+      },
       settings: stored.settings,
-      annotations: stored.annotations,
-      feedbackByPly: stored.feedbackByPly,
-      cursor: stored.cursor,
-      ...(stored.recovery === undefined ? {} : { recovery: stored.recovery }),
     };
   } catch {
     clearStoredGame(window.localStorage);
@@ -392,44 +446,92 @@ export function App() {
   const [settings, setSettings] = useState<GameSettings>(
     () => recovered?.settings ?? DEFAULT_SETTINGS,
   );
-  const [timeline, setTimeline] = useState(() =>
-    createNavigationTimeline(
-      recovered?.session ?? initialSnapshot,
-      recovered?.cursor,
-    ),
+  const [workspace, setWorkspace] = useState<SessionWorkspace>(
+    () => recovered?.workspace ?? createSessionWorkspace(initialSnapshot),
   );
-  const [moveAnnotations, setMoveAnnotations] = useState<
-    readonly MoveQualityAnnotation[]
-  >(() => recovered?.annotations ?? []);
+  const activeLine = activeSessionLine(workspace);
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+  const timeline = activeLine.timeline;
+  const moveAnnotations = activeLine.annotations;
+  const feedbackByPly = activeLine.feedbackByPly;
+  const setTimeline = (
+    update: typeof timeline | ((current: typeof timeline) => typeof timeline),
+  ) =>
+    setWorkspace((current) =>
+      updateActiveSessionLine(current, (line) => ({
+        ...line,
+        timeline: typeof update === "function" ? update(line.timeline) : update,
+      })),
+    );
+  const setMoveAnnotations = (
+    update:
+      | readonly MoveQualityAnnotation[]
+      | ((
+          current: readonly MoveQualityAnnotation[],
+        ) => readonly MoveQualityAnnotation[]),
+  ) =>
+    setWorkspace((current) =>
+      updateActiveSessionLine(current, (line) => ({
+        ...line,
+        annotations:
+          typeof update === "function" ? update(line.annotations) : update,
+      })),
+    );
+  const setFeedbackByPly = (
+    update:
+      | readonly MoveFeedbackRecord[]
+      | ((
+          current: readonly MoveFeedbackRecord[],
+        ) => readonly MoveFeedbackRecord[]),
+  ) =>
+    setWorkspace((current) =>
+      updateActiveSessionLine(current, (line) => ({
+        ...line,
+        feedbackByPly:
+          typeof update === "function" ? update(line.feedbackByPly) : update,
+      })),
+    );
   const [provisionalMoveQuality, setProvisionalMoveQuality] = useState<
     ProvisionalMoveQualityAnnotation | undefined
   >();
   const [feedback, setFeedback] = useState<CoachTurnRecord | undefined>(
     () =>
-      recovered?.feedbackByPly.find(
-        (record) => record.historyIndex === recovered.cursor - 1,
-      )?.record,
+      recovered?.workspace.lines
+        .find((line) => line.id === recovered.workspace.activeLineId)
+        ?.feedbackByPly.find(
+          (record) => record.historyIndex === activeLine.timeline.cursor - 1,
+        )?.record,
   );
-  const [feedbackByPly, setFeedbackByPly] = useState<
-    readonly MoveFeedbackRecord[]
-  >(() => recovered?.feedbackByPly ?? []);
-  const [recoverySnapshot, setRecoverySnapshot] = useState<
-    RecoverySnapshot | undefined
-  >(() => recovered?.recovery);
   const [positionNotice, setPositionNotice] = useState<PositionNotice>();
   const [selected, setSelected] = useState<Square>();
   const [lineVisiblePly, setLineVisiblePly] = useState<number>();
+  const [alternativePreparation, setAlternativePreparation] = useState<
+    { readonly lineId: string; readonly cursor: number } | undefined
+  >();
+  const [workspaceContextNotice, setWorkspaceContextNotice] = useState("");
   const [engineState, setEngineState] = useState<EngineState>("idle");
   const [paused, setPaused] = useState(
     () =>
-      recovered !== null && recovered.cursor < recovered.session.history.length,
+      recovered !== null &&
+      activeLine.timeline.cursor < activeLine.timeline.session.history.length,
   );
   const [sessionError, setSessionError] = useState<string>();
+  const [opponentName, setOpponentName] = useState(initialOpponentNameForMode);
   const [engineMessage, setEngineMessage] = useState(
-    "Maia-3 5M está disponible como oponente local.",
+    () =>
+      `${initialOpponentNameForMode()} está disponible como oponente local.`,
   );
-  const [maiaRetry, setMaiaRetry] = useState(0);
+  const [opponentRetry, setOpponentRetry] = useState(0);
+  const [enginePreparation, setEnginePreparation] = useState<
+    "preparing" | "ready" | "unavailable"
+  >("preparing");
+  const [waitingServiceWorker, setWaitingServiceWorker] =
+    useState<ServiceWorkerRegistration>();
+  const [buildId] = useState(readCurrentBuildId);
   const generation = useRef(0);
+  const coachRequestSequence = useRef(0);
+  const activeCoachRequestId = useRef<string | undefined>(undefined);
   const game = useMemo(
     () => createLocalGame(sessionAtNavigationCursor(timeline)),
     [timeline],
@@ -437,6 +539,7 @@ export function App() {
   const hasFuture = timeline.cursor < timeline.session.history.length;
   const previousHistoryLength = useRef(game.history.length);
   const engineRef = useRef<OpponentEngine | null>(null);
+  const stockfishControllerRef = useRef(getSharedBrowserStockfishController());
   const coachEngineRef = useRef<ChessEngine | null>(null);
   const coachAnalysisCacheRef = useRef<ReturnType<
     typeof createAnalysisCache
@@ -590,24 +693,47 @@ export function App() {
 
   useEffect(() => {
     if (!started || typeof window === "undefined") return;
-    saveStoredGame(
-      timeline.session,
-      settings,
-      window.localStorage,
-      moveAnnotations,
-      feedbackByPly,
-      timeline.cursor,
-      recoverySnapshot,
-    );
-  }, [
-    feedbackByPly,
-    game,
-    moveAnnotations,
-    recoverySnapshot,
-    settings,
-    started,
-    timeline,
-  ]);
+    saveStoredGame(workspace, settings, window.localStorage);
+  }, [workspace, settings, started]);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    setEnginePreparation("preparing");
+    // The singleton controller is shared by analysis and the browser opponent;
+    // setup remains usable while its Worker initializes in the background.
+    void stockfishControllerRef.current
+      .prewarm(abortController.signal)
+      .then(() => {
+        if (!abortController.signal.aborted) setEnginePreparation("ready");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        if (!abortController.signal.aborted)
+          setEnginePreparation("unavailable");
+      });
+    return () => abortController.abort();
+  }, []);
+
+  useEffect(() => {
+    const onUpdateReady = (event: Event) => {
+      const registration = (event as CustomEvent<ServiceWorkerRegistration>)
+        .detail;
+      if (registration?.waiting) setWaitingServiceWorker(registration);
+    };
+    window.addEventListener(PWA_UPDATE_EVENT, onUpdateReady);
+    void getWaitingServiceWorker()
+      .then((registration) => {
+        if (registration) setWaitingServiceWorker(registration);
+      })
+      .catch(() => undefined);
+    return () => window.removeEventListener(PWA_UPDATE_EVENT, onUpdateReady);
+  }, []);
+
+  useEffect(() => {
+    // version.json is only a freshness hint; never issue it while offline.
+    return subscribeToVersionChecks(navigator);
+  }, []);
 
   useEffect(() => {
     const previousLength = previousHistoryLength.current;
@@ -695,22 +821,31 @@ export function App() {
     const requestId = `opponent-${currentGeneration}-${requestHistoryLength}`;
     setEngineState("thinking");
     setSessionError(undefined);
-    setEngineMessage("Maia-3 está eligiendo una jugada humana plausible.");
-    const engine = (engineRef.current ??= createLocalMaia3Opponent());
+    setEngineMessage(
+      enginePreparation === "ready"
+        ? `${opponentName} está calculando su respuesta.`
+        : "Preparando el motor local…",
+    );
+    const engine = (engineRef.current ??= createBrowserOpponentEngine({
+      mode: browserOpponentMode(),
+    }));
 
-    void engine
-      .chooseMove(
-        {
-          id: requestId,
-          fen: requestFen,
-          initialFen: game.initialFen,
-          moves: game.history.map((move) => move.uci),
-          selfElo: settings.opponentElo,
-          opponentElo: settings.opponentElo,
-          temperature: 1,
-          multiPv: 5,
-        },
-        controller.signal,
+    void stockfishControllerRef.current
+      .ready(controller.signal)
+      .then(() =>
+        engine.chooseMove(
+          {
+            id: requestId,
+            fen: requestFen,
+            initialFen: game.initialFen,
+            moves: game.history.map((move) => move.uci),
+            selfElo: settings.opponentElo,
+            opponentElo: settings.opponentElo,
+            temperature: 1,
+            multiPv: 5,
+          },
+          controller.signal,
+        ),
       )
       .then(async (result) => {
         if (
@@ -741,8 +876,10 @@ export function App() {
           return replaceNavigationLine(applyEngineLine(position, uci));
         });
         setEngineState("ready");
+        const resolvedName = opponentNameForBackend(engine.getStatus().backend);
+        setOpponentName(resolvedName);
         setEngineMessage(
-          `Maia-3 5M local: respuesta aplicada ${uci} para Elo ${settings.opponentElo}.`,
+          `${resolvedName}: respuesta aplicada ${uci}; fuerza aproximada ${settings.opponentElo}.`,
         );
       })
       .catch((error: unknown) => {
@@ -751,8 +888,8 @@ export function App() {
         if (generation.current !== currentGeneration) return;
         const detail = error instanceof Error ? error.message : String(error);
         setEngineState("error");
-        setEngineMessage("Maia-3 no pudo completar su jugada.");
-        setSessionError(`Maia-3 local no está disponible: ${detail}`);
+        setEngineMessage(`${opponentName} no pudo completar su jugada.`);
+        setSessionError(`${opponentName} no está disponible: ${detail}`);
       });
 
     return () => {
@@ -769,7 +906,9 @@ export function App() {
     hasFuture,
     settings.opponentElo,
     started,
-    maiaRetry,
+    enginePreparation,
+    opponentName,
+    opponentRetry,
   ]);
 
   useEffect(() => {
@@ -802,6 +941,11 @@ export function App() {
       beforeFen: before.fen,
       afterFen: after.fen,
     } as const;
+    const analysisIdentity = createAnalysisRequestIdentity(
+      workspace,
+      `coach-${historyIndex}-${move.uci}-${++coachRequestSequence.current}`,
+    );
+    activeCoachRequestId.current = analysisIdentity.requestId;
     setFeedbackByPly((entries) => [
       ...entries.filter((entry) => entry.historyIndex !== historyIndex),
       { ...identity, status: "pending" },
@@ -914,6 +1058,15 @@ export function App() {
           afterLines: afterResult.lines,
         });
         if (signal.aborted) return;
+        if (
+          activeCoachRequestId.current !== analysisIdentity.requestId ||
+          !acceptsAnalysisResult(
+            workspaceRef.current,
+            analysisIdentity,
+            analysisIdentity.requestId,
+          )
+        )
+          return;
         setFeedbackByPly((entries) =>
           entries.map((entry) =>
             entry.historyIndex === historyIndex &&
@@ -948,6 +1101,15 @@ export function App() {
         if (
           signal.aborted ||
           (error instanceof DOMException && error.name === "AbortError")
+        )
+          return;
+        if (
+          activeCoachRequestId.current !== analysisIdentity.requestId ||
+          !acceptsAnalysisResult(
+            workspaceRef.current,
+            analysisIdentity,
+            analysisIdentity.requestId,
+          )
         )
           return;
         setProvisionalMoveQuality((current) =>
@@ -1008,6 +1170,7 @@ export function App() {
       <GameSetup
         initialSettings={settings}
         hasSavedGame={hasSavedGame}
+        opponentName={opponentName}
         onStart={(nextSettings) => {
           const selectedColor: PlayerColor =
             nextSettings.playerColor === "random"
@@ -1025,11 +1188,8 @@ export function App() {
           generation.current += 1;
           clearStoredGame();
           setSettings(resolvedSettings);
-          setTimeline(replaceNavigationLine(initialSnapshot));
-          setMoveAnnotations([]);
-          setFeedbackByPly([]);
+          setWorkspace(createSessionWorkspace(initialSnapshot));
           setFeedback(undefined);
-          setRecoverySnapshot(undefined);
           setHasSavedGame(false);
           setStarted(true);
         }}
@@ -1055,7 +1215,18 @@ export function App() {
       setMoveAnnotations((items) =>
         items.filter((item) => item.historyIndex < game.history.length),
       );
-      setTimeline(replaceNavigationLine(playMove(game, selected, square)));
+      const nextSession = playMove(game, selected, square);
+      setWorkspace(
+        (current) =>
+          continueMoveFromCursor(
+            current,
+            selected,
+            square,
+            nextSession,
+            `trial-${Date.now()}`,
+          ).workspace,
+      );
+      setAlternativePreparation(undefined);
       setSelected(undefined);
       return;
     }
@@ -1072,17 +1243,16 @@ export function App() {
     setTimeline(replaceNavigationLine(initialGame));
     setMoveAnnotations([]);
     setFeedbackByPly([]);
-    setRecoverySnapshot(undefined);
     setSelected(undefined);
     setPaused(false);
     setSessionError(undefined);
     setFeedback(undefined);
     setEngineState("idle");
     setMoveAnimation(undefined);
-    setEngineMessage("Maia-3 5M está disponible como oponente local.");
+    setEngineMessage(`${opponentName} está disponible como oponente local.`);
   };
 
-  const retryMaia = () => {
+  const retryOpponent = () => {
     generation.current += 1;
     // A disposed client cannot be revived. Drop it so the next effect creates
     // a fresh client while preserving the current board and move history.
@@ -1090,8 +1260,17 @@ export function App() {
     setSelected(undefined);
     setSessionError(undefined);
     setEngineState("idle");
-    setEngineMessage("Reintentando la jugada de Maia-3…");
-    setMaiaRetry((attempt) => attempt + 1);
+    setEngineMessage(`Reintentando la jugada de ${opponentName}…`);
+    setOpponentRetry((attempt) => attempt + 1);
+  };
+
+  const installWaitingUpdate = () => {
+    if (!waitingServiceWorker) return;
+    // Persist immediately: the reload is explicitly requested by the player,
+    // never triggered by an update arriving mid-game.
+    activateWaitingServiceWorker(waitingServiceWorker, () =>
+      saveStoredGame(workspaceRef.current, settings, window.localStorage),
+    );
   };
 
   const undo = () => {
@@ -1115,7 +1294,7 @@ export function App() {
     setSessionError(undefined);
     setEngineState("idle");
     setMoveAnimation(undefined);
-    setEngineMessage("Maia-3 5M está disponible como oponente local.");
+    setEngineMessage(`${opponentName} está disponible como oponente local.`);
   };
 
   const redo = () => {
@@ -1139,7 +1318,7 @@ export function App() {
     setSessionError(undefined);
     setEngineState("idle");
     setMoveAnimation(undefined);
-    setEngineMessage("Maia-3 5M está disponible como oponente local.");
+    setEngineMessage(`${opponentName} está disponible como oponente local.`);
   };
 
   undoShortcut.current = undo;
@@ -1167,18 +1346,18 @@ export function App() {
     coachQueueRef.current?.invalidate();
     generation.current += 1;
     clearStoredGame();
+    setWorkspace(createSessionWorkspace(initialSnapshot));
     setHasSavedGame(false);
     setStarted(false);
     setPaused(false);
     setMoveAnnotations([]);
     setFeedbackByPly([]);
     setFeedback(undefined);
-    setRecoverySnapshot(undefined);
     setMoveAnimation(undefined);
   };
 
   const downloadPgn = () => {
-    const blob = new Blob([exportPgn(game)], {
+    const blob = new Blob([exportPgn(exportSessionForWorkspace(workspace))], {
       type: "application/x-chess-pgn",
     });
     const url = URL.createObjectURL(blob);
@@ -1187,6 +1366,28 @@ export function App() {
     anchor.download = "chess-coach-partida.pgn";
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const applyWorkspaceLineChange = (nextWorkspace: SessionWorkspace) => {
+    const nextLine = activeSessionLine(nextWorkspace);
+    cancelCoachPrewarms();
+    coachQueueRef.current?.invalidate();
+    generation.current += 1;
+    setProvisionalMoveQuality(clearProvisionalForLineChange());
+    setWorkspace(nextWorkspace);
+    setPaused(
+      nextLine.timeline.cursor < nextLine.timeline.session.history.length,
+    );
+    setFeedback(
+      nextLine.feedbackByPly.find(
+        (entry) => entry.historyIndex === nextLine.timeline.cursor - 1,
+      )?.record,
+    );
+    setSelected(undefined);
+    setSessionError(undefined);
+    setEngineState("idle");
+    setMoveAnimation(undefined);
+    setEngineMessage(`${opponentName} está disponible como oponente local.`);
   };
 
   const importPgnFile = async (file: File) => {
@@ -1201,7 +1402,6 @@ export function App() {
       setTimeline(replaceNavigationLine(importedGame));
       setMoveAnnotations([]);
       setFeedbackByPly([]);
-      setRecoverySnapshot(undefined);
       setSelected(undefined);
       setPaused(false);
       setSessionError(undefined);
@@ -1234,30 +1434,26 @@ export function App() {
     setEngineMessage(
       cursor < timeline.session.history.length
         ? "Vista histórica: el tablero está en pausa."
-        : "Maia-3 5M está disponible como oponente local.",
+        : `${opponentName} está disponible como oponente local.`,
     );
   };
 
   const continueFromHere = () => {
     if (!hasFuture) return;
-    const checkpoint: RecoverySnapshot = {
-      session: timeline.session,
-      cursor: timeline.cursor,
-      annotations: moveAnnotations,
-      feedbackByPly,
-    };
     cancelCoachPrewarms();
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
     generation.current += 1;
-    setRecoverySnapshot(checkpoint);
-    setTimeline(continueNavigationFromCursor(timeline));
-    setMoveAnnotations((items) =>
-      items.filter((item) => item.historyIndex < game.history.length),
-    );
-    setFeedbackByPly((items) =>
-      items.filter((item) => item.historyIndex < game.history.length),
-    );
+    try {
+      setWorkspace((current) =>
+        createTrialLine(current, `trial-${Date.now()}`),
+      );
+    } catch {
+      setSessionError(
+        "Ya hay cinco pruebas. Elige una para eliminar antes de crear otra.",
+      );
+      return;
+    }
     setSelected(undefined);
     setEngineState("idle");
     setPaused(false);
@@ -1265,7 +1461,9 @@ export function App() {
   };
 
   const recoverPreviousBranch = () => {
-    if (!recoverySnapshot) return;
+    // Former v5 recovery is now represented as a selectable trial line.
+    return;
+    /*
     cancelCoachPrewarms();
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
@@ -1293,6 +1491,7 @@ export function App() {
     setEngineState("idle");
     setMoveAnimation(undefined);
     setEngineMessage("Rama anterior recuperada. Puedes continuar desde aquí.");
+    */
   };
 
   continueShortcut.current = continueFromHere;
@@ -1312,9 +1511,47 @@ export function App() {
     generation.current += 1;
     setLineVisiblePly(undefined);
     setTimeline(moveNavigationCursor(timeline, before.history.length));
+    setAlternativePreparation({
+      lineId: workspace.activeLineId,
+      cursor: timeline.cursor,
+    });
     setPaused(false);
     setEngineState("idle");
     setEngineMessage("Encuentra una alternativa y comprueba tu idea.");
+  };
+
+  const cancelAlternativePreparation = () => {
+    const preparation = alternativePreparation;
+    if (!preparation) return;
+    const restored = navigateSessionLine(
+      selectSessionLine(workspace, preparation.lineId),
+      preparation.cursor,
+    );
+    applyWorkspaceLineChange(restored);
+    setAlternativePreparation(undefined);
+    setWorkspaceContextNotice("Volviste a la partida guardada.");
+  };
+
+  const selectWorkspaceLine = (lineId: string) => {
+    applyWorkspaceLineChange(selectSessionLine(workspace, lineId));
+    setAlternativePreparation(undefined);
+  };
+
+  const returnToMainLine = () => {
+    selectWorkspaceLine(workspace.mainLineId);
+    setWorkspaceContextNotice("Contexto cambiado a la partida principal.");
+  };
+
+  const promoteWorkspaceLine = (lineId: string) => {
+    applyWorkspaceLineChange(promoteSessionLine(workspace, lineId));
+    setAlternativePreparation(undefined);
+    setWorkspaceContextNotice("La prueba pasó a ser la partida principal.");
+  };
+
+  const deleteWorkspaceLine = (lineId: string) => {
+    applyWorkspaceLineChange(deleteSessionLine(workspace, lineId));
+    setAlternativePreparation(undefined);
+    setWorkspaceContextNotice("La prueba se eliminó.");
   };
 
   const renderHistoryPly = (
@@ -1361,6 +1598,21 @@ export function App() {
 
   return (
     <main className="shell">
+      {waitingServiceWorker ? (
+        <aside className="pwa-update" role="status" aria-live="polite">
+          <span>Nueva versión lista.</span>
+          <button type="button" onClick={installWaitingUpdate}>
+            Actualizar
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setWaitingServiceWorker(undefined)}
+          >
+            Ahora no
+          </button>
+        </aside>
+      ) : null}
       {positionNotice ? (
         <div
           className={`position-notice position-notice-${positionNotice.kind}`}
@@ -1386,6 +1638,14 @@ export function App() {
           <div className="game-heading">
             <p className="eyebrow">Partida local · Sin cuenta</p>
             <h1 id="page-title">Tablero de práctica</h1>
+            {buildId ? (
+              <small
+                className="build-version"
+                aria-label={`Versión ${buildId}`}
+              >
+                v{buildId}
+              </small>
+            ) : null}
           </div>
           <p className="turn" aria-live="polite">
             <span className="turn-indicator" aria-hidden="true" />
@@ -1393,6 +1653,9 @@ export function App() {
             {colorName(playerColor)}
           </p>
         </header>
+        <p className="visually-hidden" role="status" aria-atomic="true">
+          {workspaceContextNotice}
+        </p>
         <div className="game-layout">
           <AdvicePanel
             feedbackEntry={adviceEntry}
@@ -1409,6 +1672,11 @@ export function App() {
             selectedMaia={hasFuture && selectedFeedbackEntry?.actor === "maia"}
           />
           <section className="board-panel" aria-label="Tablero de ajedrez">
+            {alternativePreparation ? (
+              <AlternativePreparationBar
+                onCancel={cancelAlternativePreparation}
+              />
+            ) : null}
             <p className="board-help" id="board-help">
               Selecciona una pieza y después una casilla marcada para moverla.
             </p>
@@ -1556,7 +1824,7 @@ export function App() {
             {lastMove ? (
               <p className="last-move-note" aria-live="polite">
                 Última jugada: <strong>{lastMoveDisplay}</strong> ·{" "}
-                {lastMoveColor === playerColor ? "Tú" : "Maia-3"}
+                {lastMoveColor === playerColor ? "Tú" : opponentName}
               </p>
             ) : null}
             <div className="captured-trays">
@@ -1572,14 +1840,14 @@ export function App() {
                 captured={capturedByColor[engineColor].map(
                   (capture) => capture.piece,
                 )}
-                label="Capturadas por Maia-3"
+                label={`Capturadas por ${opponentName}`}
               />
             </div>
           </section>
           <aside className="side-panel" aria-label="Controles y movimientos">
             <section className="engine-status" aria-live="polite">
               <p className="label">
-                Maia-3 5M local · Elo {settings.opponentElo}
+                {opponentName} · Fuerza aproximada {settings.opponentElo}
               </p>
               <strong data-state={engineState}>
                 {engineState === "thinking"
@@ -1588,10 +1856,28 @@ export function App() {
                     ? "Listo"
                     : engineState === "error"
                       ? "No disponible"
-                      : "En espera"}
+                      : enginePreparation === "preparing"
+                        ? "Preparando"
+                        : enginePreparation === "unavailable"
+                          ? "No disponible"
+                          : "Listo"}
               </strong>
               <p>{engineMessage}</p>
             </section>
+            <WorkspaceLinePanel
+              workspace={workspace}
+              onSelect={selectWorkspaceLine}
+              onReturnToMain={returnToMainLine}
+              onPromote={promoteWorkspaceLine}
+              onDelete={deleteWorkspaceLine}
+              onContextChange={setWorkspaceContextNotice}
+            />
+            {shouldPromptPromotion(workspace) ? (
+              <PromotionSuggestion
+                onPromote={() => promoteWorkspaceLine(workspace.activeLineId)}
+                onDismiss={() => setWorkspace(dismissPromotionPrompt)}
+              />
+            ) : null}
             <div className="session-actions" aria-label="Acciones de partida">
               <div
                 className="history-controls"
@@ -1645,7 +1931,7 @@ export function App() {
                   <button type="button" onClick={reset}>
                     Reiniciar partida
                   </button>
-                  {recoverySnapshot ? (
+                  {false ? (
                     <button
                       type="button"
                       onClick={recoverPreviousBranch}
@@ -1684,8 +1970,8 @@ export function App() {
               <div className="session-error" role="alert">
                 <p>{sessionError}</p>
                 {engineState === "error" ? (
-                  <button type="button" onClick={retryMaia}>
-                    Reintentar Maia-3
+                  <button type="button" onClick={retryOpponent}>
+                    Reintentar rival local
                   </button>
                 ) : null}
               </div>

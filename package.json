@@ -8,11 +8,13 @@
     "node": ">=22 <25"
   },
   "scripts": {
-    "dev": "pnpm --filter @chess-coach/web dev",
+    "dev": "node tools/dev-with-maia.mjs",
+    "dev:web": "pnpm --filter @chess-coach/web dev",
     "build": "pnpm -r --if-present build",
+    "build:sites": "node tools/build-sites.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm test:tools && pnpm -r --if-present test",
-    "test:tools": "node --test tools/maia3-bridge.test.mjs",
+    "test:tools": "node --test tools/*.test.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

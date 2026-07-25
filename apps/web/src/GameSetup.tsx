@@ -7,6 +7,7 @@ interface GameSetupProps {
   readonly onStart: (settings: GameSettings) => void;
   readonly onResume: () => void;
   readonly onClearSavedGame: () => void;
+  readonly opponentName: string;
 }
 
 export function GameSetup({
@@ -15,6 +16,7 @@ export function GameSetup({
   onStart,
   onResume,
   onClearSavedGame,
+  opponentName,
 }: GameSetupProps) {
   const [opponentElo, setOpponentElo] = useState(initialSettings.opponentElo);
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -90,9 +92,9 @@ export function GameSetup({
             </label>
           </fieldset>
           <fieldset className="setup-option-group setup-option-group-opponent">
-            <legend>Oponente Maia-3</legend>
+            <legend>Fuerza de {opponentName}</legend>
             <label htmlFor="opponent-elo">
-              Elo objetivo:{" "}
+              Nivel aproximado:{" "}
               <output htmlFor="opponent-elo">{opponentElo}</output>
             </label>
             <input
@@ -107,8 +109,8 @@ export function GameSetup({
               onChange={(event) => setOpponentElo(Number(event.target.value))}
             />
             <small id="opponent-elo-help">
-              Escala aproximada de Lichess Blitz; no equivale directamente al
-              Elo FIDE ni al de Chess.com.
+              Referencia aproximada para ajustar el reto. {opponentName} no
+              representa un Elo exacto.
             </small>
           </fieldset>
           <fieldset className="setup-option-group setup-option-group-engine">

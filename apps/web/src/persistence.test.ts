@@ -74,7 +74,7 @@ describe("local persistence", () => {
     saveStoredGame(session, DEFAULT_SETTINGS, storage);
 
     expect(loadStoredGame(storage)).toMatchObject({
-      version: 5,
+      version: 6,
       session: { fen: session.fen, pgn: session.pgn },
       settings: DEFAULT_SETTINGS,
       annotations: [],
@@ -119,7 +119,7 @@ describe("local persistence", () => {
     storage.setItem("chess-coach:active-game:v1", JSON.stringify(legacy));
 
     expect(loadStoredGame(storage)).toMatchObject({
-      version: 5,
+      version: 6,
       annotations: [],
     });
   });
@@ -131,7 +131,7 @@ describe("local persistence", () => {
     saveStoredGame(session, DEFAULT_SETTINGS, storage, [], [], 1);
 
     expect(loadStoredGame(storage)).toMatchObject({
-      version: 5,
+      version: 6,
       cursor: 1,
       session: { history: [{ uci: "e2e4" }, { uci: "e7e5" }] },
     });
@@ -154,6 +154,26 @@ describe("local persistence", () => {
       annotations: [],
       feedbackByPly: [],
     });
+    expect(loadStoredGame(storage)?.workspace).toMatchObject({
+      version: 6,
+      mainLineId: "main",
+      activeLineId: "trial-1",
+    });
+  });
+
+  it("rejects a corrupt trial without replacing a valid main line", () => {
+    const storage = memoryStorage();
+    saveStoredGame(createInitialGame(), DEFAULT_SETTINGS, storage);
+    const stored = JSON.parse(
+      storage.getItem("chess-coach:active-game:v1") ?? "{}",
+    ) as { workspace: { lines: unknown[] } };
+    stored.workspace.lines.push({
+      id: "trial-bad",
+      timeline: { session: {}, cursor: 0 },
+    });
+    storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
+
+    expect(loadStoredGame(storage)?.workspace.lines).toHaveLength(1);
   });
 
   it("rejects a recovery snapshot with an invalid cursor", () => {

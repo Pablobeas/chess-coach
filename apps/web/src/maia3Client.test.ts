@@ -1,6 +1,9 @@
 import { createInitialGame } from "@chess-coach/chess-core";
 import { describe, expect, it, vi } from "vitest";
-import { createLocalMaia3Opponent } from "./maia3Client";
+import {
+  BRIDGE_UNAVAILABLE_MESSAGE,
+  createLocalMaia3Opponent,
+} from "./maia3Client";
 
 const request = {
   id: "opponent-1",
@@ -98,14 +101,40 @@ describe("local Maia-3 client", () => {
     );
   });
 
-  it("uses a plain-text bridge error when JSON is unavailable", async () => {
+  it("treats a 502 proxy failure as an unavailable local bridge", async () => {
     const fetcher = vi.fn(
-      async () => new Response("El proceso UCI terminó", { status: 502 }),
+      async () => new Response("El proceso UCI termino", { status: 502 }),
     );
     const opponent = createLocalMaia3Opponent(fetcher as typeof fetch);
 
     await expect(opponent.chooseMove(request)).rejects.toThrow(
-      "El proceso UCI terminó",
+      BRIDGE_UNAVAILABLE_MESSAGE,
+    );
+  });
+
+  it("reports a missing local bridge when fetch fails before receiving a response", async () => {
+    const fetcher = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    const opponent = createLocalMaia3Opponent(fetcher as typeof fetch);
+
+    await expect(opponent.chooseMove(request)).rejects.toThrow(
+      BRIDGE_UNAVAILABLE_MESSAGE,
+    );
+  });
+
+  it("reports an invalid bridge payload when JSON parsing fails", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response("not-json", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const opponent = createLocalMaia3Opponent(fetcher as typeof fetch);
+
+    await expect(opponent.chooseMove(request)).rejects.toThrow(
+      "Respuesta invalida de Maia-3",
     );
   });
 });

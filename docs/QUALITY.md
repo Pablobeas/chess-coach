@@ -1,5 +1,8 @@
 # Calidad y evaluaciones
 
+Se prueban navegación sin bifurcar, creación/eliminación/promoción reversible,
+límite de cinco pruebas y persistencia/migración v5→v6, incluyendo datos corruptos.
+
 ## Metodología de desarrollo
 
 Usamos desarrollo guiado por funcionalidades con TDD en las capas críticas. Cada
@@ -41,6 +44,9 @@ se considera terminada hasta que sus estados importantes tengan pruebas de regre
   su orden visual, tanto con blancas como con negras.
 - `ready` de Maia implica que el modelo completó una inferencia de calentamiento; un
   error o reintento nunca modifica la posición mientras no exista una jugada legal.
+- El lanzador de desarrollo no deja la web disponible hasta que `/health` confirma
+  `ready`, y un 502 del proxy se interpreta como bridge no disponible, no como una
+  respuesta ajedrecística válida.
 - La navegación conserva una sola sesión completa y un cursor; no acumula una sesión
   prefijo por cada deshacer o selección histórica.
 - El precálculo del turno humano debe coincidir exactamente en FEN, perspectiva,

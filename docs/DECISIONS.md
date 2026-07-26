@@ -233,3 +233,16 @@ El feedback se identifica por media jugada y no por revisión mutable. La persis
 normaliza cualquier estado pendiente como no disponible al restaurar, y los análisis
 terminan siempre en `ready` o `unavailable`. El resultado tardío solo se aplica si la
 misma jugada sigue vigente.
+
+## ADR-016 — Timeouts separados para bootstrap, ready y búsqueda
+
+**Estado:** aceptada.
+
+El broker compartido usa tres tiempos distintos: 15 s para bootstrap, 15 s para el
+handshake `ready` y 5 s para la búsqueda activa. El timeout de búsqueda se inicia solo
+después de `readyok`, de modo que un arranque en frío o una preemption móvil no
+consuman el presupuesto de la búsqueda real.
+
+Esta separación evita falsos negativos en dispositivos lentos y permite que un
+análisis interrumpido por la jugada del rival libere la ruta sin arrastrar un estado
+pendiente al nuevo actor.

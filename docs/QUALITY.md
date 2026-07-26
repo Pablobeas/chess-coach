@@ -108,3 +108,7 @@ las brechas de verificaciÃ³n manual estÃ¡n declaradas.
 - La verificación móvil confirma que el documento no desplaza la pantalla en uso
   normal, que el tablero y el resumen siguen visibles y que el feedback termina en
   tiempo o informa error recuperable.
+- La cobertura de engine añade un caso de bootstrap lento seguido de handshake
+  `readyok` y búsqueda activa, y otro de análisis interrumpido por la jugada del
+  rival para confirmar que el broker entrega el control al nuevo actor sin dejar
+  estados colgados.

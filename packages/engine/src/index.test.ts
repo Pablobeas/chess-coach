@@ -276,6 +276,83 @@ class DelayedBootWorker extends FakeUciWorker {
   }
 }
 
+class SlowBootstrapWorker extends FakeUciWorker {
+  constructor(
+    private readonly uciDelayMs: number,
+    private readonly readyDelayMs: number,
+  ) {
+    super();
+  }
+
+  override postMessage(message: string): void {
+    this.messages.push(message);
+    if (message === "uci") {
+      globalThis.setTimeout(() => {
+        for (const option of [
+          "option name Hash type spin default 16 min 1 max 1024",
+          "option name MultiPV type spin default 1 min 1 max 500",
+          "option name Skill Level type spin default 20 min 0 max 20",
+          "option name UCI_ShowWDL type check default false",
+          "option name UCI_LimitStrength type check default false",
+          "option name UCI_Elo type spin default 1320 min 1320 max 3190",
+        ]) {
+          this.emit(option);
+        }
+        this.emit("uciok");
+      }, this.uciDelayMs);
+      return;
+    }
+    if (message === "isready") {
+      globalThis.setTimeout(() => this.emit("readyok"), this.readyDelayMs);
+      return;
+    }
+    if (message.startsWith("go ")) {
+      queueMicrotask(() => {
+        this.emit("info depth 8 nodes 42 score cp 24 pv e2e4 e7e5");
+        this.emit("bestmove e2e4");
+      });
+      return;
+    }
+  }
+}
+
+class DelayedReadyAfterInterruptWorker extends FakeUciWorker {
+  private isReadyCount = 0;
+  private goCount = 0;
+
+  constructor(
+    private readonly delayedReadyMs: number,
+    private readonly delayedReadyOrdinal = 4,
+  ) {
+    super();
+  }
+
+  override postMessage(message: string): void {
+    if (message.startsWith("go ")) {
+      this.messages.push(message);
+      this.goCount += 1;
+      if (this.goCount === 2) {
+        queueMicrotask(() => {
+          this.emit("info depth 8 nodes 42 score cp 24 pv e2e4 e7e5");
+          this.emit("bestmove e2e4");
+        });
+      }
+      return;
+    }
+    if (message === "isready") {
+      this.messages.push(message);
+      this.isReadyCount += 1;
+      if (this.isReadyCount === this.delayedReadyOrdinal) {
+        globalThis.setTimeout(() => this.emit("readyok"), this.delayedReadyMs);
+        return;
+      }
+      queueMicrotask(() => this.emit("readyok"));
+      return;
+    }
+    super.postMessage(message);
+  }
+}
+
 class QueuedSearchWorker extends FakeUciWorker {
   readonly goCommands: string[] = [];
   private readonly queue: UciSearchResponse[] = [];
@@ -347,6 +424,83 @@ describe("UCI worker engine", () => {
 
     worker.emitBootReady();
     await expect(broker.ready()).resolves.toBeUndefined();
+  });
+
+  it("keeps bootstrap timeout terminal after 15 seconds and ignores late worker readiness", async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = new DelayedBootWorker();
+      const broker = createUciWorkerBroker(worker);
+      let settled = false;
+      const ready = broker.ready();
+      const observedReady = ready
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
+
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(observedReady).resolves.toMatchObject({
+        name: "EngineBootstrapError",
+        message: "Stockfish UCI handshake timed out",
+      });
+      expect(broker.getAnalysisStatus()).toEqual({
+        backend: "stockfish-wasm",
+        availability: "error",
+        message: "Stockfish UCI handshake timed out",
+      });
+      expect(worker.listenerCount("message")).toBe(0);
+      expect(worker.listenerCount("error")).toBe(0);
+
+      const uciCountAtTimeout = worker.messages.filter(
+        (message) => message === "uci",
+      ).length;
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(
+        worker.messages.filter((message) => message === "uci"),
+      ).toHaveLength(uciCountAtTimeout);
+
+      worker.emitBootReady();
+      expect(broker.getAnalysisStatus()).toEqual({
+        backend: "stockfish-wasm",
+        availability: "error",
+        message: "Stockfish UCI handshake timed out",
+      });
+      await broker.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows a slow bootstrap handshake to finish before marking the broker unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = new SlowBootstrapWorker(3_000, 3_000);
+      const broker = createUciWorkerBroker(worker);
+      let settled = false;
+
+      const ready = broker.ready().finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(6_499);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2);
+      await expect(ready).resolves.toBeUndefined();
+      expect(
+        worker.messages.filter((message) => message === "uci"),
+      ).toHaveLength(2);
+      expect(
+        worker.messages.filter((message) => message === "isready"),
+      ).toEqual(["isready"]);
+      await broker.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("prioritizes a queued opponent search ahead of queued analysis on the same broker", async () => {
@@ -486,7 +640,9 @@ describe("UCI worker engine", () => {
     });
 
     await expect
-      .poll(() => worker.messages.filter((message) => message.startsWith("go ")))
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
       .toEqual(["go nodes 200"]);
 
     const opponent = broker.chooseMove({
@@ -494,11 +650,11 @@ describe("UCI worker engine", () => {
       id: "opponent-after-active-analysis",
     });
 
+    await expect.poll(() => worker.messages.includes("stop")).toBe(true);
     await expect
-      .poll(() => worker.messages.includes("stop"))
-      .toBe(true);
-    await expect
-      .poll(() => worker.messages.filter((message) => message.startsWith("go ")))
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
       .toEqual(["go nodes 200", "go movetime 180"]);
 
     worker.emit("info depth 8 nodes 42 score cp 24 pv e2e4 e7e5");
@@ -510,6 +666,55 @@ describe("UCI worker engine", () => {
       backend: "stockfish-wasm",
       move: "e2e4",
     });
+  });
+
+  it("keeps a preempting opponent search alive while the worker is still becoming ready after an interrupted analysis", async () => {
+    vi.useFakeTimers();
+    try {
+      const worker = new DelayedReadyAfterInterruptWorker(6_000);
+      const broker = createUciWorkerBroker(worker);
+      const initialReady = broker.ready();
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(initialReady).resolves.toBeUndefined();
+      await broker.ready();
+
+      const analysis = broker.analyze({
+        id: "analysis-interrupted-before-readyok",
+        fen: initialPosition,
+        perspective: "white",
+        multiPv: 1,
+        limit: { kind: "nodes", nodes: 200 },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(
+        worker.messages.filter((message) => message.startsWith("go ")),
+      ).toEqual(["go nodes 200"]);
+
+      let opponentSettled = false;
+      const opponent = broker
+        .chooseMove({
+          ...defaultOpponentRequest,
+          id: "opponent-delayed-ready-after-interrupt",
+        })
+        .finally(() => {
+          opponentSettled = true;
+        });
+
+      await expect(analysis).rejects.toMatchObject({ name: "AbortError" });
+
+      await vi.advanceTimersByTimeAsync(5_999);
+      expect(opponentSettled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2);
+      await expect(opponent).resolves.toMatchObject({
+        id: "opponent-delayed-ready-after-interrupt",
+        backend: "stockfish-wasm",
+        move: "e2e4",
+      });
+      await broker.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("publishes normalized progress snapshots before the final result without a second search", async () => {

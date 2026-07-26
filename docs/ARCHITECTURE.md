@@ -193,6 +193,14 @@ En navegador hosted o estático, y en móvil, análisis y oponente comparten un 
 broker Stockfish. Ese broker serializa trabajos, da prioridad a la jugada del rival
 frente al análisis en cola y evita dos Workers compitiendo por CPU y memoria.
 
+El broker separa tres presupuestos distintos: bootstrap del motor de 15 s, handshake
+`ready` de 15 s y búsqueda activa de 5 s. El timeout de búsqueda solo se arma después
+de recibir `readyok`, para no penalizar el arranque en frío ni confundir un cold
+start con una búsqueda lenta. En móvil esto también reduce el impacto de la
+preemption del sistema: si la app vuelve al frente después de una pausa, el
+bootstrap y el handshake siguen teniendo su margen propio antes de empezar a contar
+la búsqueda real.
+
 La composición de la UI se decide por ancho de pantalla: en <=720 px la experiencia
 usa una vista fija con tablero, resumen, navegación y acciones compactas; en
 orientación horizontal se reorganiza en dos columnas. El shell móvil bloquea el

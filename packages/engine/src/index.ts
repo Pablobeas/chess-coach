@@ -207,6 +207,8 @@ export class EngineBootstrapError extends EngineUnavailableError {
 const SIMULATED_DEPTH = 1;
 const CENTIPAWN_STEP_PER_RANK = 10;
 const MAXIMUM_PRINCIPAL_VARIATION_MOVES = 128;
+const BOOTSTRAP_TIMEOUT_MILLISECONDS = 15000;
+const READY_HANDSHAKE_TIMEOUT_MILLISECONDS = 15000;
 const SEARCH_TIMEOUT_MILLISECONDS = 5000;
 const POST_STOP_READY_TIMEOUT_MILLISECONDS = 1000;
 const DEFAULT_TRANSPOSITION_TABLE_HASH_MEGABYTES = 64;
@@ -723,6 +725,7 @@ export function createUciWorkerBroker(
   let statusAvailability: EngineAvailability = "loading";
   let statusMessage: string | undefined;
   let bootPhase: "uci" | "ready" = "uci";
+  let bootTerminal = false;
   let optionState = createOptionState();
   let rejectActiveSearch: ((error: Error) => void) | undefined;
   let postStopReadyBarrier: Promise<void> = Promise.resolve();
@@ -748,11 +751,34 @@ export function createUciWorkerBroker(
     statusMessage = message;
   };
 
-  const bootTimeout = globalThis.setTimeout(() => {
-    const error = new EngineBootstrapError("Stockfish UCI handshake timed out");
+  const cleanupBoot = () => {
+    globalThis.clearTimeout(bootTimeout);
+    globalThis.clearInterval(bootInterval);
+    worker.removeEventListener("message", onBootMessage);
+    worker.removeEventListener("error", onBootError);
+  };
+
+  const finalizeBootFailure = (error: EngineBootstrapError) => {
+    if (bootTerminal) return;
+    bootTerminal = true;
+    cleanupBoot();
     setStatus("error", error.message);
     rejectReady(error);
-  }, 5000);
+  };
+
+  const finalizeBootReady = () => {
+    if (bootTerminal) return;
+    bootTerminal = true;
+    cleanupBoot();
+    setStatus("ready");
+    resolveReady();
+  };
+
+  const bootTimeout = globalThis.setTimeout(() => {
+    finalizeBootFailure(
+      new EngineBootstrapError("Stockfish UCI handshake timed out"),
+    );
+  }, BOOTSTRAP_TIMEOUT_MILLISECONDS);
   const bootInterval = globalThis.setInterval(
     () => worker.postMessage("uci"),
     2000,
@@ -770,6 +796,7 @@ export function createUciWorkerBroker(
   };
 
   const onBootMessage = (event: MessageEvent<unknown> | ErrorEvent) => {
+    if (bootTerminal) return;
     if (!("data" in event)) return;
     const data = event.data;
     if (typeof data === "string") {
@@ -783,11 +810,7 @@ export function createUciWorkerBroker(
         return;
       }
       if (line === "readyok" && bootPhase === "ready") {
-        globalThis.clearTimeout(bootTimeout);
-        worker.removeEventListener("message", onBootMessage);
-        worker.removeEventListener("error", onBootError);
-        setStatus("ready");
-        resolveReady();
+        finalizeBootReady();
         return;
       }
       return;
@@ -802,28 +825,17 @@ export function createUciWorkerBroker(
         "message" in data && typeof data.message === "string"
           ? data.message
           : "Stockfish worker bootstrap failed";
-      const error = new EngineBootstrapError(message);
-      globalThis.clearTimeout(bootTimeout);
-      globalThis.clearInterval(bootInterval);
-      worker.removeEventListener("message", onBootMessage);
-      worker.removeEventListener("error", onBootError);
-      setStatus("error", message);
-      rejectReady(error);
+      finalizeBootFailure(new EngineBootstrapError(message));
     }
   };
 
   const onBootError = (event: ErrorEvent | MessageEvent<unknown>) => {
+    if (bootTerminal) return;
     const message =
       "message" in event && typeof event.message === "string" && event.message
         ? event.message
         : "Stockfish worker failed to load";
-    const error = new EngineBootstrapError(message);
-    globalThis.clearTimeout(bootTimeout);
-    globalThis.clearInterval(bootInterval);
-    worker.removeEventListener("message", onBootMessage);
-    worker.removeEventListener("error", onBootError);
-    setStatus("error", message);
-    rejectReady(error);
+    finalizeBootFailure(new EngineBootstrapError(message));
   };
 
   worker.addEventListener("message", onBootMessage);
@@ -905,6 +917,14 @@ export function createUciWorkerBroker(
       let latestNodes = 0;
       let searchStarted = false;
       const linesByRank = new Map<number, ParsedInfoLine>();
+      const armTimeout = (milliseconds: number) => {
+        globalThis.clearTimeout(timeout);
+        timeout = globalThis.setTimeout(() => {
+          interruptSearch(
+            new EngineUnavailableError("Engine analysis timed out"),
+          );
+        }, milliseconds);
+      };
 
       const cleanup = () => {
         globalThis.clearTimeout(timeout);
@@ -936,6 +956,7 @@ export function createUciWorkerBroker(
         const line = event.data.trim();
         if (line === "readyok") {
           if (searchStarted) return;
+          armTimeout(SEARCH_TIMEOUT_MILLISECONDS);
           applyDesiredOptions(buildAnalysisOptions(request, optionState));
           worker.postMessage(`position fen ${request.fen}`);
           setStatus("analyzing");
@@ -1028,11 +1049,7 @@ export function createUciWorkerBroker(
         });
       };
 
-      timeout = globalThis.setTimeout(() => {
-        interruptSearch(
-          new EngineUnavailableError("Engine analysis timed out"),
-        );
-      }, SEARCH_TIMEOUT_MILLISECONDS);
+      armTimeout(READY_HANDSHAKE_TIMEOUT_MILLISECONDS);
 
       if (disposed) {
         reject(createDisposedError());
@@ -1068,6 +1085,14 @@ export function createUciWorkerBroker(
       let timeout: ReturnType<typeof globalThis.setTimeout>;
       let searchStarted = false;
       const linesByRank = new Map<number, ParsedInfoLine>();
+      const armTimeout = (milliseconds: number) => {
+        globalThis.clearTimeout(timeout);
+        timeout = globalThis.setTimeout(() => {
+          interruptSearch(
+            new EngineUnavailableError("Engine opponent search timed out"),
+          );
+        }, milliseconds);
+      };
 
       const cleanup = () => {
         globalThis.clearTimeout(timeout);
@@ -1099,6 +1124,7 @@ export function createUciWorkerBroker(
         const line = event.data.trim();
         if (line === "readyok") {
           if (searchStarted) return;
+          armTimeout(SEARCH_TIMEOUT_MILLISECONDS);
           applyDesiredOptions(buildOpponentOptions(request, optionState));
           worker.postMessage(`position fen ${request.fen}`);
           setStatus("analyzing");
@@ -1185,11 +1211,7 @@ export function createUciWorkerBroker(
         });
       };
 
-      timeout = globalThis.setTimeout(() => {
-        interruptSearch(
-          new EngineUnavailableError("Engine opponent search timed out"),
-        );
-      }, SEARCH_TIMEOUT_MILLISECONDS);
+      armTimeout(READY_HANDSHAKE_TIMEOUT_MILLISECONDS);
 
       if (disposed) {
         reject(createDisposedError());
@@ -1321,7 +1343,10 @@ export function createUciWorkerBroker(
     },
     analyze(request, signal, onProgress) {
       const interruptController = new AbortController();
-      const mergedSignal = mergeAbortSignals(signal, interruptController.signal);
+      const mergedSignal = mergeAbortSignals(
+        signal,
+        interruptController.signal,
+      );
       return enqueue(
         1,
         signal,

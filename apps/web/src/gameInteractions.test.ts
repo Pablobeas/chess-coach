@@ -4,22 +4,28 @@ import {
   createMoveAnimation,
   ENGINE_RESPONSE_DELAY_MS,
   isEditableKeyboardTarget,
+  opponentMoveSquareAccessibilityLabel,
+  opponentMoveSquareRole,
+  opponentLastMoveHighlight,
   waitForDelay,
 } from "./gameInteractions";
 
 describe("game interactions", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("resolves an empty response delay without scheduling a timer", async () => {
+  it("waits exactly 500 ms before applying an opponent response", async () => {
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const pending = waitForDelay(
+      ENGINE_RESPONSE_DELAY_MS,
+      new AbortController().signal,
+    );
 
-    await expect(
-      waitForDelay(ENGINE_RESPONSE_DELAY_MS, new AbortController().signal),
-    ).resolves.toBeUndefined();
+    expect(ENGINE_RESPONSE_DELAY_MS).toBe(500);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 500);
+    await vi.advanceTimersByTimeAsync(500);
 
-    expect(ENGINE_RESPONSE_DELAY_MS).toBe(0);
-    expect(setTimeoutSpy).not.toHaveBeenCalled();
+    await expect(pending).resolves.toBeUndefined();
   });
 
   it("cancels a pending response delay", async () => {
@@ -28,6 +34,50 @@ describe("game interactions", () => {
     const pending = waitForDelay(1, controller.signal);
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("highlights the latest visible opponent move until the user moves", () => {
+    const initial = createInitialGame();
+    const afterPlayerMove = applyMove(initial, { from: "e2", to: "e4" });
+    const afterOpponentMove = applyMove(afterPlayerMove, {
+      from: "e7",
+      to: "e5",
+    });
+
+    expect(opponentLastMoveHighlight(afterPlayerMove, "white")).toBeUndefined();
+    expect(opponentLastMoveHighlight(afterOpponentMove, "white")).toEqual({
+      from: "e7",
+      to: "e5",
+    });
+    expect(
+      opponentLastMoveHighlight(
+        applyMove(afterOpponentMove, { from: "g1", to: "f3" }),
+        "white",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("derives highlights from the active line and player color", () => {
+    const afterE4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    expect(opponentLastMoveHighlight(afterE4, "black")).toEqual({
+      from: "e2",
+      to: "e4",
+    });
+    expect(opponentLastMoveHighlight(afterE4, "white")).toBeUndefined();
+  });
+
+  it("provides semantic roles and labels for both highlighted squares", () => {
+    const highlight = { from: "e7", to: "e5" } as const;
+    const origin = opponentMoveSquareRole("e7", highlight);
+    const destination = opponentMoveSquareRole("e5", highlight);
+
+    expect(origin).toBe("from");
+    expect(destination).toBe("to");
+    expect(opponentMoveSquareRole("e6", highlight)).toBeUndefined();
+    expect(opponentMoveSquareAccessibilityLabel(origin)).toContain("origen");
+    expect(opponentMoveSquareAccessibilityLabel(destination)).toContain(
+      "destino",
+    );
   });
 
   it("ignores keyboard shortcuts in editable controls", () => {

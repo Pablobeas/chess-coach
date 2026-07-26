@@ -77,6 +77,14 @@ del usuario a terceros sin una funciÃ³n explÃ­cita y consentimiento informad
 - En móvil, la interfaz de partida usa un shell fijo hasta 720 px, con safe areas,
   tablero protagonista, resumen compacto del entrenador y acciones agrupadas en un
   dock o menú.
+- La respuesta del rival espera de forma intencional 500 ms antes de aplicarse y
+  animarse; esa espera es cancelable si cambia el estado de la partida y no implica
+  un tiempo total fijo del motor.
+- Durante el turno del usuario, el origen y destino de la última jugada rival se
+  resaltan en amarillo y se limpian al realizar la siguiente jugada; la indicación
+  visual deriva del historial activo y sigue la navegación por variantes y flechas.
+- La indicación no depende solo del color: también se expone por texto accesible y
+  atributos ARIA para lectores de pantalla.
 - El feedback visible muestra primero un resumen breve y abre el detalle completo en
   un panel desplazable.
 - En escritorio no se altera la composición actual.

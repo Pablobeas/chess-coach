@@ -128,6 +128,12 @@ las brechas de verificación manual están declaradas.
 - La verificación móvil confirma que el documento no desplaza la pantalla en uso
   normal, que el tablero y el resumen siguen visibles y que el feedback termina en
   tiempo o informa error recuperable.
+- Las pruebas de interacción deben cubrir que la última jugada rival queda
+  resaltada en amarillo durante el turno del usuario, que el estado se limpia tras la
+  siguiente jugada y que la navegación por flechas y variantes conserva ese contexto
+  visual.
+- La accesibilidad verifica que ese contexto también se comunica sin depender solo
+  del color, mediante texto visible y atributos ARIA.
 - La cobertura de engine añade un caso de bootstrap lento seguido de handshake
   `readyok` y búsqueda activa, y otro de análisis interrumpido por la jugada del
   rival para confirmar que el broker entrega el control al nuevo actor sin dejar

@@ -382,6 +382,20 @@ h1 {
     inset 0 0 0 4px #f5bd42,
     inset 0 0 0 7px rgb(48 46 43 / 80%);
 }
+.square.opponent-last-move {
+  /* A translucent fill preserves the piece silhouette on either board color. */
+  background-image: linear-gradient(
+    rgb(255 215 61 / 58%),
+    rgb(255 215 61 / 58%)
+  );
+  box-shadow: inset 0 0 0 3px #7b5700;
+}
+.square.opponent-last-move.selected {
+  box-shadow:
+    inset 0 0 0 3px #7b5700,
+    inset 0 0 0 6px #f5bd42,
+    inset 0 0 0 9px rgb(48 46 43 / 80%);
+}
 .move-arrow-overlay {
   position: absolute;
   z-index: 4;
@@ -1154,6 +1168,13 @@ button:focus-visible {
   box-shadow:
     inset 0 0 0 3px #302e2b,
     inset 0 0 0 6px #fff;
+}
+@media (forced-colors: active) {
+  .square.opponent-last-move {
+    background-image: none;
+    outline: 3px solid Highlight;
+    outline-offset: -5px;
+  }
 }
 @media (max-width: 1160px) {
   .game {

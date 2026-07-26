@@ -234,6 +234,10 @@ normaliza cualquier estado pendiente como no disponible al restaurar, y los aná
 terminan siempre en `ready` o `unavailable`. El resultado tardío solo se aplica si la
 misma jugada sigue vigente.
 
+La respuesta del rival puede introducir una espera breve intencional antes de
+aplicarse y animarse; esa espera es cancelable y no forma parte de una promesa fija
+de tiempo total de análisis.
+
 ## ADR-017 — Espejo público de artefactos con GitHub Pages
 
 **Estado:** aceptada.

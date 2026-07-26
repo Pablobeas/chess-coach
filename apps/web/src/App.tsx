@@ -43,6 +43,9 @@ import {
   createMoveAnimation,
   ENGINE_RESPONSE_DELAY_MS,
   isEditableKeyboardTarget,
+  opponentLastMoveHighlight,
+  opponentMoveSquareAccessibilityLabel,
+  opponentMoveSquareRole,
   type MoveAnimation,
   PIECE_MOVE_DURATION_MS,
   waitForDelay,
@@ -931,6 +934,49 @@ function applyEngineLine(current: GameSession, uci: string): GameSession {
   return playUciMove(current, uci);
 }
 
+export type OpponentResponseRequest = {
+  readonly lineId: string;
+  readonly cursor: number;
+  readonly fen: string;
+  readonly historyLength: number;
+};
+
+export function opponentResponseStillMatches(
+  request: OpponentResponseRequest,
+  current: OpponentResponseRequest,
+): boolean {
+  return (
+    request.lineId === current.lineId &&
+    request.cursor === current.cursor &&
+    request.fen === current.fen &&
+    request.historyLength === current.historyLength
+  );
+}
+
+/**
+ * Applies a response only to the exact line/route that requested it. Returning
+ * the original workspace is a deliberate no-op: callers must not animate or
+ * announce a response that was not committed.
+ */
+export function applyCurrentOpponentResponse(
+  workspace: SessionWorkspace,
+  request: OpponentResponseRequest,
+  uci: string,
+): SessionWorkspace {
+  const line = activeSessionLine(workspace);
+  const position = sessionAtNavigationCursor(line.timeline);
+  if (
+    !opponentResponseStillMatches(request, {
+      lineId: line.id,
+      cursor: line.timeline.cursor,
+      fen: position.fen,
+      historyLength: position.history.length,
+    })
+  )
+    return workspace;
+  return syncActiveLineSession(workspace, applyEngineLine(position, uci));
+}
+
 /**
  * Safari can report a layout viewport behind its browser controls while the
  * visual viewport is shorter. Keep the mobile shell tied to the latter; CSS
@@ -1248,6 +1294,7 @@ export function App() {
         to: squarePoint(lastMove.to as Square, playerColor),
       }
     : undefined;
+  const opponentMoveHighlight = opponentLastMoveHighlight(game, playerColor);
   const feedbackByHistoryIndex = useMemo(
     () => new Map(feedbackByPly.map((entry) => [entry.historyIndex, entry])),
     [feedbackByPly],
@@ -1469,6 +1516,7 @@ export function App() {
     const requestPosition = game;
     const requestHistoryLength = game.history.length;
     const requestLineId = activeLine.id;
+    const requestCursor = timeline.cursor;
     const requestId = `opponent-${currentGeneration}-${requestHistoryLength}`;
     setEngineState("thinking");
     setSessionError(undefined);
@@ -1512,27 +1560,30 @@ export function App() {
           generation.current !== currentGeneration
         )
           return;
+        const request = {
+          lineId: requestLineId,
+          cursor: requestCursor,
+          fen: requestFen,
+          historyLength: requestHistoryLength,
+        };
+        // Check and prepare the workspace update before any visible side
+        // effect. A same-FEN trial line is still a different route.
+        const currentWorkspace = workspaceRef.current;
+        const nextWorkspace = applyCurrentOpponentResponse(
+          currentWorkspace,
+          request,
+          uci,
+        );
+        if (nextWorkspace === currentWorkspace) return;
+        setWorkspace(nextWorkspace);
+        setWorkspaceContextNotice(
+          workspaceTransitionNotice(currentWorkspace, nextWorkspace),
+        );
         beginMoveAnimation(
           requestPosition,
           uci.slice(0, 2) as Square,
           uci.slice(2, 4) as Square,
         );
-        setWorkspace((current) => {
-          const line = activeSessionLine(current);
-          const position = sessionAtNavigationCursor(line.timeline);
-          if (
-            line.id !== requestLineId ||
-            position.fen !== requestFen ||
-            position.history.length !== requestHistoryLength
-          )
-            return current;
-          const next = syncActiveLineSession(
-            current,
-            applyEngineLine(position, uci),
-          );
-          setWorkspaceContextNotice(workspaceTransitionNotice(current, next));
-          return next;
-        });
         setEngineState("ready");
         const resolvedName = opponentNameForBackend(engine.getStatus().backend);
         setOpponentName(resolvedName);
@@ -1559,6 +1610,8 @@ export function App() {
     game.fen,
     game.history.length,
     game.turn,
+    activeLine.id,
+    timeline.cursor,
     playerColor,
     paused,
     isBrowsingHistory,
@@ -2375,15 +2428,17 @@ export function App() {
                     const isSelected = selected === square;
                     const isDestination = destinations.includes(square);
                     const squareQuality = qualityBySquare.get(square);
-                    const isLastMoveFrom = lastMove?.from === square;
-                    const isLastMoveTo = lastMove?.to === square;
+                    const opponentMoveRole = opponentMoveSquareRole(
+                      square,
+                      opponentMoveHighlight,
+                    );
                     return (
                       <button
                         key={square}
                         type="button"
-                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}`}
+                        className={`square ${(file + rank) % 2 === 0 ? "light" : "dark"}${isSelected ? " selected" : ""}${isDestination ? " destination" : ""}${opponentMoveRole ? ` opponent-last-move opponent-last-move-${opponentMoveRole}` : ""}`}
                         onClick={() => selectSquare(square)}
-                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${isLastMoveFrom ? ", origen de la última jugada" : ""}${isLastMoveTo ? ", destino de la última jugada" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
+                        aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${opponentMoveSquareAccessibilityLabel(opponentMoveRole)}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
                         aria-pressed={isSelected}
                         disabled={
                           !canPlayBoard(

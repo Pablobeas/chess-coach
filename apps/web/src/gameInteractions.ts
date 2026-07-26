@@ -5,8 +5,58 @@ import type {
 } from "@chess-coach/chess-core";
 import { boardForFen, type Square } from "./localGame";
 
-export const ENGINE_RESPONSE_DELAY_MS = 0;
+export const ENGINE_RESPONSE_DELAY_MS = 500;
 export const PIECE_MOVE_DURATION_MS = 250;
+
+export type OpponentMoveHighlight = {
+  readonly from: Square;
+  readonly to: Square;
+};
+
+export type OpponentMoveSquareRole = "from" | "to" | undefined;
+
+/**
+ * Keeps the opponent's last move visible only while it is the player's turn.
+ * This is derived from the visible session, so undo/redo and line changes can
+ * never retain a highlight from another position.
+ */
+export function opponentLastMoveHighlight(
+  position: Pick<GameSession, "history" | "initialFen">,
+  playerColor: PlayerColor,
+): OpponentMoveHighlight | undefined {
+  const moveIndex = position.history.length - 1;
+  const move = position.history[moveIndex];
+  if (!move) return undefined;
+
+  const initialTurn: PlayerColor =
+    position.initialFen.split(" ")[1] === "w" ? "white" : "black";
+  const lastMoveColor =
+    moveIndex % 2 === 0
+      ? initialTurn
+      : initialTurn === "white"
+        ? "black"
+        : "white";
+  if (lastMoveColor === playerColor) return undefined;
+
+  return { from: move.from as Square, to: move.to as Square };
+}
+
+export function opponentMoveSquareRole(
+  square: Square,
+  highlight: OpponentMoveHighlight | undefined,
+): OpponentMoveSquareRole {
+  if (highlight?.from === square) return "from";
+  if (highlight?.to === square) return "to";
+  return undefined;
+}
+
+export function opponentMoveSquareAccessibilityLabel(
+  role: OpponentMoveSquareRole,
+): string {
+  if (role === "from") return ", origen de la última jugada rival";
+  if (role === "to") return ", destino de la última jugada rival";
+  return "";
+}
 
 export type AnimatedPiece = {
   readonly piece: { readonly color: PlayerColor; readonly type: PieceType };

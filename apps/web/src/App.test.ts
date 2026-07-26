@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GameTurnStatus,
   AdvicePanel,
+  applyCurrentOpponentResponse,
   COACH_DEADLINE_MS,
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
@@ -32,6 +33,7 @@ import {
   isCurrentCoachRequest,
   isRetryTargetActive,
   opponentNameForBackend,
+  opponentResponseStillMatches,
   readCurrentBuildId,
   retryAnalysisTarget,
   rebuildCoachRetryTurn,
@@ -176,6 +178,44 @@ describe("workspace transition announcements", () => {
     expect(workspaceTransitionNotice(first, pruned)).toContain(
       "eliminó automáticamente",
     );
+  });
+});
+
+describe("opponent response route identity", () => {
+  it("rejects a delayed response after switching to a same-FEN trial line", () => {
+    const initial = createInitialGame();
+    const main = createSessionWorkspace(initial);
+    const trial = createTrialLine(main, "same-fen-trial");
+    const request = {
+      lineId: "main",
+      cursor: 0,
+      fen: initial.fen,
+      historyLength: 0,
+    };
+
+    expect(
+      opponentResponseStillMatches(request, {
+        ...request,
+        lineId: "same-fen-trial",
+      }),
+    ).toBe(false);
+    expect(applyCurrentOpponentResponse(trial, request, "e2e4")).toBe(trial);
+    expect(
+      trial.lines.every((line) => line.timeline.session.history.length === 0),
+    ).toBe(true);
+  });
+
+  it("only applies a delayed response when its exact route is still active", () => {
+    const initial = createInitialGame();
+    const workspace = createSessionWorkspace(initial);
+    const next = applyCurrentOpponentResponse(
+      workspace,
+      { lineId: "main", cursor: 0, fen: initial.fen, historyLength: 0 },
+      "e2e4",
+    );
+
+    expect(next).not.toBe(workspace);
+    expect(next.lines[0]?.timeline.session.history.at(-1)?.uci).toBe("e2e4");
   });
 });
 

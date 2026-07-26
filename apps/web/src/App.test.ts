@@ -15,7 +15,9 @@ import {
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
+  coachDebugEnabled,
   coachFailureAction,
+  coachFailureStageForPrimaryLines,
   canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
@@ -25,6 +27,7 @@ import {
   opponentNameForBackend,
   readCurrentBuildId,
   retryAnalysisTarget,
+  reportCoachFailureDebug,
   shouldReplacePendingFeedback,
   workspaceTransitionNotice,
 } from "./App";
@@ -246,6 +249,77 @@ describe("coach feedback states", () => {
     );
     expect(coachFailureAction({ name: "OtherError" }, false, true, 0)).toBe(
       "unavailable",
+    );
+  });
+
+  it("only emits sanitized coach failure diagnostics when explicitly enabled", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const originalSearch = window.location.search;
+
+    expect(coachDebugEnabled("?coachDebug=0")).toBe(false);
+    reportCoachFailureDebug({
+      stage: "before",
+      error: new Error(
+        "FEN rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1",
+      ),
+      signalAborted: false,
+      identityActive: true,
+      autoAttempt: 0,
+      action: "unavailable",
+    });
+    expect(warning).not.toHaveBeenCalled();
+
+    window.history.replaceState({}, "", "?coachDebug=1");
+    expect(coachDebugEnabled()).toBe(true);
+    reportCoachFailureDebug({
+      stage: "after",
+      error: {
+        name: "EngineUnavailableError",
+        message:
+          "FEN rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1",
+      },
+      signalAborted: false,
+      identityActive: true,
+      autoAttempt: 1,
+      action: "auto-retry",
+    });
+
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0]?.[0]).toBe("[coach-debug] analysis failed");
+    expect(warning.mock.calls[0]?.[1]).toEqual({
+      stage: "after",
+      errorName: "EngineUnavailableError",
+      errorMessage: "[redacted-position-data]",
+      signalAborted: false,
+      identityActive: true,
+      autoAttempt: 1,
+      action: "auto-retry",
+    });
+
+    reportCoachFailureDebug({
+      stage: "acceptance",
+      error: {
+        name: "FEN rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR",
+        message: "safe",
+      },
+      signalAborted: false,
+      identityActive: true,
+      autoAttempt: 0,
+      action: "unavailable",
+    });
+    expect(warning.mock.calls[1]?.[1]).toMatchObject({
+      errorName: "[unknown-error-name]",
+      errorMessage: "safe",
+    });
+
+    window.history.replaceState({}, "", originalSearch || "/");
+    warning.mockRestore();
+  });
+
+  it("marks a missing primary line as a validation-stage failure", () => {
+    expect(coachFailureStageForPrimaryLines([], [])).toBe("acceptance");
+    expect(coachFailureStageForPrimaryLines([{ rank: 1 }], [{ rank: 1 }])).toBe(
+      "analyzeTurn",
     );
   });
 

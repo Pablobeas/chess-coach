@@ -110,6 +110,87 @@ import {
 
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
+export type CoachFailureStage =
+  "before" | "after" | "analyzeTurn" | "acceptance";
+export type CoachFailureAction = "auto-retry" | "unavailable" | "stale";
+
+const FEN_IN_ERROR_MESSAGE =
+  /\b(?:[prnbqkPRNBQK1-8]+\/){7}[prnbqkPRNBQK1-8]+\s[wb]\s(?:-|[KQkq]+)\s(?:-|[a-h][36])\s\d+\s\d+\b/;
+const SAFE_COACH_ERROR_NAMES = new Set([
+  "AbortError",
+  "Error",
+  "EngineUnavailableError",
+  "EngineBootstrapError",
+  "InvalidAnalysisRequestError",
+]);
+
+export function coachDebugEnabled(search?: string): boolean {
+  const resolvedSearch =
+    search ?? (typeof window === "undefined" ? "" : window.location.search);
+  return new URLSearchParams(resolvedSearch).get("coachDebug") === "1";
+}
+
+function normalizedCoachErrorName(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { readonly name?: unknown }).name === "string"
+  ) {
+    const name = (error as { readonly name: string }).name;
+    return SAFE_COACH_ERROR_NAMES.has(name) ? name : "[unknown-error-name]";
+  }
+  return "UnknownError";
+}
+
+export function coachFailureStageForPrimaryLines(
+  beforeLines: readonly { readonly rank: number }[],
+  afterLines: readonly { readonly rank: number }[],
+): "analyzeTurn" | "acceptance" {
+  return beforeLines[0] && afterLines[0] ? "analyzeTurn" : "acceptance";
+}
+
+function normalizedCoachErrorMessage(error: unknown): string {
+  const value =
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { readonly message?: unknown }).message === "string"
+      ? (error as { readonly message: string }).message
+      : "";
+  if (/\b(?:fen|pgn)\b/i.test(value) || FEN_IN_ERROR_MESSAGE.test(value)) {
+    return "[redacted-position-data]";
+  }
+  return value.replace(/\s+/g, " ").trim().slice(0, 160) || "[no-message]";
+}
+
+export function reportCoachFailureDebug({
+  stage,
+  error,
+  signalAborted,
+  identityActive,
+  autoAttempt,
+  action,
+}: {
+  readonly stage: CoachFailureStage;
+  readonly error: unknown;
+  readonly signalAborted: boolean;
+  readonly identityActive: boolean;
+  readonly autoAttempt: number;
+  readonly action: CoachFailureAction;
+}): void {
+  if (!coachDebugEnabled()) return;
+  console.warn("[coach-debug] analysis failed", {
+    stage,
+    errorName: normalizedCoachErrorName(error),
+    errorMessage: normalizedCoachErrorMessage(error),
+    signalAborted,
+    identityActive,
+    autoAttempt,
+    action,
+  });
+}
+
 export function isCurrentCoachRequest(
   pending: { readonly identity: { readonly requestId: string } } | undefined,
   requestId: string,
@@ -122,7 +203,7 @@ export function coachFailureAction(
   outerSignalAborted: boolean,
   identityActive: boolean,
   autoAttempts: number,
-): "auto-retry" | "unavailable" | "stale" {
+): CoachFailureAction {
   if (!identityActive || outerSignalAborted) return "stale";
   if (isAbortErrorLike(error) && autoAttempts < 1) return "auto-retry";
   return "unavailable";
@@ -1357,6 +1438,7 @@ export function App() {
       const engine = (coachEngineRef.current ??=
         createBrowserStockfishEngine());
       const searchPlan = coachSearchPlan(settings.enginePreset);
+      let failureStage: CoachFailureStage = "before";
       try {
         let beforeForProgress: AnalysisResult | undefined;
         let latestAfterProgress: AnalysisProgress | undefined;
@@ -1430,26 +1512,39 @@ export function App() {
             beforeForProgress = result;
             if (latestAfterProgress) publishProvisional(latestAfterProgress);
             return result;
+          })
+          .catch((error: unknown) => {
+            failureStage = "before";
+            throw error;
           });
-        const afterPromise = coachAnalysisCache.analyze(
-          engine,
-          {
-            id: `coach-${actor}-after-${historyIndex}`,
-            fen: after.fen,
-            perspective: playerColor,
-            preset: settings.enginePreset,
-            multiPv: searchPlan.afterMultiPv,
-            limit: searchPlan.limit,
-          },
-          signal,
-          publishProvisional,
-        );
+        const afterPromise = coachAnalysisCache
+          .analyze(
+            engine,
+            {
+              id: `coach-${actor}-after-${historyIndex}`,
+              fen: after.fen,
+              perspective: playerColor,
+              preset: settings.enginePreset,
+              multiPv: searchPlan.afterMultiPv,
+              limit: searchPlan.limit,
+            },
+            signal,
+            publishProvisional,
+          )
+          .catch((error: unknown) => {
+            failureStage = "after";
+            throw error;
+          });
         const [beforeResult, afterResult] = await Promise.all([
           beforePromise,
           afterPromise,
         ]);
         const beforeLine = beforeResult.lines[0];
         const afterLine = afterResult.lines[0];
+        failureStage = coachFailureStageForPrimaryLines(
+          beforeResult.lines,
+          afterResult.lines,
+        );
         if (!beforeLine || !afterLine) throw new Error("Missing analysis line");
         const record = analyzeTurn(before, after, beforeLine, afterLine, {
           actor,
@@ -1459,6 +1554,7 @@ export function App() {
           afterLines: afterResult.lines,
         });
         if (signal.aborted) return;
+        failureStage = "acceptance";
         if (
           activeCoachRequestId.current !== analysisIdentity.requestId ||
           !acceptsAnalysisResult(
@@ -1509,21 +1605,27 @@ export function App() {
             : current,
         );
       } catch (error) {
-        if (
-          activeCoachRequestId.current !== analysisIdentity.requestId ||
-          !acceptsAnalysisResult(
+        const identityActive =
+          activeCoachRequestId.current === analysisIdentity.requestId &&
+          acceptsAnalysisResult(
             workspaceRef.current,
             analysisIdentity,
             analysisIdentity.requestId,
-          )
-        )
-          return;
+          );
         const failureAction = coachFailureAction(
           error,
           signal.aborted,
-          true,
+          identityActive,
           retryTarget?.autoAttempts ?? 0,
         );
+        reportCoachFailureDebug({
+          stage: failureStage,
+          error,
+          signalAborted: signal.aborted,
+          identityActive,
+          autoAttempt: retryTarget?.autoAttempts ?? 0,
+          action: failureAction,
+        });
         if (failureAction === "stale") return;
         if (failureAction === "auto-retry") {
           setRetryTarget({

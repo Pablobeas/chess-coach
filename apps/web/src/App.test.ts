@@ -23,6 +23,7 @@ import {
   coachFailureStageForPrimaryLines,
   coachRemainingDelay,
   canPlayBoard,
+  compactReadyFeedbackSummary,
   describeGameTurnStatus,
   initialOpponentNameForMode,
   isAbortErrorLike,
@@ -223,6 +224,32 @@ describe("coach feedback states", () => {
       retry?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("builds the compact mobile summary with only a differing best move", () => {
+    expect(
+      compactReadyFeedbackSummary({
+        playedSan: "e4",
+        classification: "excellent",
+        motif: "development",
+        playedUci: "e2e4",
+        bestUci: "d2d4",
+        bestMove: "peón d2-d4",
+      }),
+    ).toEqual({
+      title: "e4 · Excelente",
+      reason: "Motivo: desarrollo · Mejor: peón d2-d4",
+    });
+    expect(
+      compactReadyFeedbackSummary({
+        playedSan: "e4",
+        classification: "best",
+        motif: "development",
+        playedUci: "e2e4",
+        bestUci: "e2e4",
+        bestMove: "peón e2-e4",
+      }).reason,
+    ).toBe("Motivo: desarrollo");
   });
 
   it("only renders the mobile evaluation text when enabled", async () => {

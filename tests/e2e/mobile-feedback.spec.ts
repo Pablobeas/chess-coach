@@ -45,6 +45,12 @@ async function moveButton(page: Page, san: string) {
   return page.getByRole("button", { name: new RegExp(`^${san}(,|$)`) }).last();
 }
 
+function terminalCoachFeedback(page: Page) {
+  return page
+    .getByRole("button", { name: /Abrir análisis de/ })
+    .or(page.getByRole("button", { name: "Reintentar análisis" }));
+}
+
 test.describe("mobile fixed game and coach feedback", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -149,13 +155,9 @@ test.describe("mobile fixed game and coach feedback", () => {
     // The opponent response is allowed to arrive while the coach is still queued.
     await expect(await moveButton(page, "e4")).toBeVisible({ timeout: 20_000 });
     await expect(await moveButton(page, "e5")).toBeVisible({ timeout: 20_000 });
-    await expect(
-      page.locator(".feedback").filter({
-        has: page.getByRole("heading", {
-          name: /Feedback de tu jugada|No pude terminar este análisis/,
-        }),
-      }),
-    ).toBeVisible({ timeout: 20_000 });
+    await expect(terminalCoachFeedback(page)).toBeVisible({
+      timeout: 20_000,
+    });
     await expect(
       page.getByText("Estoy revisando esa decisión…", { exact: true }),
     ).toHaveCount(0);
@@ -207,23 +209,25 @@ test.describe("mobile fixed game and coach feedback", () => {
     await playMove(page, "e2", "e4");
     await expect(page.locator(".feedback")).toBeVisible({ timeout: 20_000 });
 
-    const detail = page.getByRole("button", { name: "Ver explicación" });
-    if (await detail.count()) {
-      await detail.click();
-      await expect(
-        page.getByRole("dialog", { name: /Análisis de/ }),
-      ).toBeVisible();
-      await expect(
-        page
-          .getByRole("dialog", { name: /Análisis de/ })
-          .getByRole("button", { name: "Cerrar" }),
-      ).toBeFocused();
-      await page.keyboard.press("Escape");
-      await expect(
-        page.getByRole("dialog", { name: /Análisis de/ }),
-      ).toHaveCount(0);
-      await expect(detail).toBeFocused();
-    }
+    const detail = page.getByRole("button", { name: /Abrir análisis de/ });
+    await expect(detail).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Ver variante" }),
+    ).toBeHidden();
+    await detail.click();
+    await expect(
+      page.getByRole("dialog", { name: /Análisis de/ }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog", { name: /Análisis de/ })
+        .getByRole("button", { name: "Cerrar" }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: /Análisis de/ })).toHaveCount(
+      0,
+    );
+    await expect(detail).toBeFocused();
     const treeTrigger = page.getByRole("button", {
       name: /^(Principal|Variante)$/,
     });
@@ -286,7 +290,73 @@ test.describe("mobile fixed game and coach feedback", () => {
     expect(metrics.squares.every((size) => size >= 32)).toBe(true);
   });
 
-  test("long feedback stays clamped without compressing the board", async ({
+  test("ready feedback stays compact without hiding the mobile game dock", async ({
+    page,
+  }) => {
+    await installMaiaMock(page);
+    await start(page);
+    await playMove(page, "e2", "e4");
+    await expect(page.locator(".feedback-ready")).toBeVisible({
+      timeout: 20_000,
+    });
+    const configuredViewport = test.info().project.use.viewport as
+      { width?: number } | undefined;
+    if (configuredViewport?.width === 390) {
+      await page.setViewportSize({ width: 390, height: 710 });
+      await page.evaluate(() =>
+        window.visualViewport?.dispatchEvent(new Event("resize")),
+      );
+    }
+
+    const summary = page.getByRole("button", { name: /Abrir análisis de/ });
+    await expect(summary).toBeVisible();
+    await expect(summary).toHaveAccessibleName(/e4.*Motivo/);
+    const metrics = await page.evaluate(() => {
+      const viewportHeight =
+        window.visualViewport?.height ?? window.innerHeight;
+      const selectors = [
+        ".game-header",
+        ".mobile-evaluation",
+        ".feedback-mobile-summary",
+        ".board",
+        ".mobile-tree-toggle",
+        ".history-controls",
+        ".pause-button",
+        ".mobile-more-toggle",
+      ];
+      return {
+        viewportHeight,
+        scrollHeight: document.documentElement.scrollHeight,
+        feedbackHeight: document
+          .querySelector<HTMLElement>(".feedback-ready")
+          ?.getBoundingClientRect().height,
+        hiddenDesktopActions: !document
+          .querySelector<HTMLElement>(".feedback-ready-content")
+          ?.getClientRects().length,
+        required: selectors.map((selector) => {
+          const rect = document
+            .querySelector<HTMLElement>(selector)
+            ?.getBoundingClientRect();
+          return { selector, top: rect?.top ?? -1, bottom: rect?.bottom ?? -1 };
+        }),
+      };
+    });
+    expect(metrics.feedbackHeight).toBeLessThanOrEqual(72);
+    expect(metrics.hiddenDesktopActions).toBe(true);
+    if (configuredViewport?.width === 390) {
+      expect(metrics.scrollHeight).toBeLessThanOrEqual(
+        metrics.viewportHeight + 1,
+      );
+      for (const item of metrics.required) {
+        expect(item.top, item.selector).toBeGreaterThanOrEqual(0);
+        expect(item.bottom, item.selector).toBeLessThanOrEqual(
+          metrics.viewportHeight + 1,
+        );
+      }
+    }
+  });
+
+  test("long mobile feedback summary truncates while the dialog keeps full text", async ({
     page,
   }) => {
     test.skip(
@@ -297,32 +367,42 @@ test.describe("mobile fixed game and coach feedback", () => {
     await installMaiaMock(page);
     await start(page);
     await playMove(page, "e2", "e4");
-    await expect(page.locator(".feedback-copy")).toBeVisible({
+    const summary = page.getByRole("button", { name: /Abrir análisis de/ });
+    await expect(summary).toBeVisible({
       timeout: 20_000,
     });
-    const metrics = await page.locator(".feedback-copy").evaluate((element) => {
-      element.textContent = Array.from(
+    const fullCopy = (await page.locator(".feedback-copy").textContent()) ?? "";
+    expect(fullCopy.length).toBeGreaterThan(0);
+    const metrics = await summary.evaluate((element) => {
+      const reason = element.querySelector("span:last-child");
+      if (!reason) throw new Error("Missing compact feedback reason");
+      reason.textContent = Array.from(
         { length: 80 },
         () =>
           "Una explicación larga de prueba para comprobar el recorte accesible.",
       ).join(" ");
-      const style = getComputedStyle(element);
       const board = document
         .querySelector<HTMLElement>(".board")
         ?.getBoundingClientRect();
       return {
-        lineClamp: style.webkitLineClamp,
-        clientHeight: element.clientHeight,
-        scrollHeight: element.scrollHeight,
+        summaryHeight: element.getBoundingClientRect().height,
+        reasonClientWidth: reason.clientWidth,
+        reasonScrollWidth: reason.scrollWidth,
         boardWidth: board?.width ?? 0,
         scrollWidth: document.documentElement.scrollWidth,
         innerWidth: window.innerWidth,
       };
     });
-    expect(metrics.lineClamp).not.toBe("none");
-    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+    expect(metrics.summaryHeight).toBeLessThanOrEqual(72);
+    expect(metrics.reasonScrollWidth).toBeGreaterThan(
+      metrics.reasonClientWidth,
+    );
     expect(metrics.boardWidth).toBeGreaterThanOrEqual(280);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
+    await summary.click();
+    await expect(
+      page.getByRole("dialog", { name: /Análisis de/ }),
+    ).toContainText(fullCopy);
   });
 
   test("a reduced Safari visual viewport keeps the game controls in view", async ({

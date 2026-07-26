@@ -574,6 +574,34 @@ const motifLabels: Readonly<Record<string, string>> = Object.freeze({
   none: "sin motivo adicional",
 });
 
+export function compactReadyFeedbackSummary({
+  playedSan,
+  classification,
+  motif,
+  playedUci,
+  bestUci,
+  bestMove,
+}: {
+  readonly playedSan: string;
+  readonly classification: MoveLabel | undefined;
+  readonly motif: string;
+  readonly playedUci: string;
+  readonly bestUci: string | undefined;
+  readonly bestMove: string | undefined;
+}): Readonly<{ title: string; reason: string }> {
+  const quality = classification
+    ? qualityMeta[classification].label
+    : "Analizada";
+  const recommendedMove =
+    bestUci !== undefined && bestUci !== playedUci && bestMove
+      ? ` · Mejor: ${bestMove}`
+      : "";
+  return Object.freeze({
+    title: `${playedSan} · ${quality}`,
+    reason: `Motivo: ${motifLabels[motif] ?? "posición"}${recommendedMove}`,
+  });
+}
+
 function QualityBadge({
   label,
   provisional = false,
@@ -660,6 +688,7 @@ export function AdvicePanel({
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const detailTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileDetailTriggerRef = useRef<HTMLButtonElement>(null);
   const detailCloseRef = useRef<HTMLButtonElement>(null);
   const detailWasOpenRef = useRef(false);
   useEffect(() => {
@@ -672,11 +701,14 @@ export function AdvicePanel({
   }, [detailOpen]);
   useEffect(() => {
     if (detailOpen) detailCloseRef.current?.focus();
-    if (!detailOpen && detailWasOpenRef.current)
-      (
-        detailTriggerRef.current ??
-        document.querySelector<HTMLButtonElement>(".feedback-detail-trigger")
-      )?.focus();
+    if (!detailOpen && detailWasOpenRef.current) {
+      const trigger =
+        [mobileDetailTriggerRef.current, detailTriggerRef.current].find(
+          (element) => element?.getClientRects().length,
+        ) ??
+        document.querySelector<HTMLButtonElement>(".feedback-detail-trigger");
+      trigger?.focus();
+    }
     detailWasOpenRef.current = detailOpen;
   }, [detailOpen]);
   const feedback = feedbackEntry?.record;
@@ -690,6 +722,16 @@ export function AdvicePanel({
         : [],
     [feedback?.turn.beforeFen, feedback?.evidence.verifiedBestVariation],
   );
+  const compactSummary = feedback
+    ? compactReadyFeedbackSummary({
+        playedSan: feedback.turn.playedSan,
+        classification: feedback.assessment?.label,
+        motif: feedback.motif.kind,
+        playedUci: feedback.turn.playedUci,
+        bestUci: feedback.evidence.verifiedBestVariation[0]?.uci,
+        bestMove: displayedLine[0],
+      })
+    : undefined;
   if (helpLevel === "none") return null;
   return (
     <aside className="advice-panel" aria-label="Consejos del entrenador">
@@ -733,61 +775,76 @@ export function AdvicePanel({
           </p>
         </section>
       ) : feedback ? (
-        <section className="feedback" aria-labelledby="feedback-title">
-          <div className="moves-heading">
-            <h2 id="feedback-title">Feedback de tu jugada</h2>
-            <strong>
-              {feedback.assessment
-                ? qualityMeta[feedback.assessment.label].label
+        <section
+          className="feedback feedback-ready"
+          aria-labelledby="feedback-title"
+        >
+          <button
+            ref={mobileDetailTriggerRef}
+            type="button"
+            className="feedback-mobile-summary"
+            onClick={() => setDetailOpen(true)}
+            aria-label={`Abrir análisis de ${feedback.turn.playedSan}. ${compactSummary?.title}. ${compactSummary?.reason}.`}
+          >
+            <span>{compactSummary?.title}</span>
+            <span>{compactSummary?.reason}</span>
+          </button>
+          <div className="feedback-ready-content">
+            <div className="moves-heading">
+              <h2 id="feedback-title">Feedback de tu jugada</h2>
+              <strong>
+                {feedback.assessment
+                  ? qualityMeta[feedback.assessment.label].label
+                  : ""}
+              </strong>
+            </div>
+            <p className="feedback-copy">{feedback.copy?.text}</p>
+            <p className="feedback-meta">
+              Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
+              {feedback.motif.confidence
+                ? ` · confianza ${feedback.motif.confidence}`
                 : ""}
-            </strong>
-          </div>
-          <p className="feedback-copy">{feedback.copy?.text}</p>
-          <p className="feedback-meta">
-            Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
-            {feedback.motif.confidence
-              ? ` · confianza ${feedback.motif.confidence}`
-              : ""}
-          </p>
-          <div className="feedback-actions">
-            <button
-              ref={detailTriggerRef}
-              type="button"
-              className="secondary feedback-detail-trigger"
-              onClick={() => setDetailOpen(true)}
-            >
-              Ver explicación
-            </button>
-            {displayedLine.length ? (
+            </p>
+            <div className="feedback-actions">
               <button
+                ref={detailTriggerRef}
                 type="button"
-                className="secondary"
-                onClick={onToggleLine}
+                className="secondary feedback-detail-trigger"
+                onClick={() => setDetailOpen(true)}
               >
-                {lineVisible ? "Ocultar variante" : "Ver variante"}
+                Ver explicación
               </button>
-            ) : null}
-          </div>
-          {lineVisible && displayedLine.length ? (
-            <ol
-              className="feedback-line"
-              aria-label="Variante recomendada verificada"
-            >
-              {displayedLine.map((move, index) => (
-                <li key={`${move}-${index}`}>{move}</li>
-              ))}
-            </ol>
-          ) : null}
-          {helpLevel === "guided" && feedback.hints.length ? (
-            <details>
-              <summary>Pistas para profundizar</summary>
-              <ol>
-                {feedback.hints.map((hint) => (
-                  <li key={hint.level}>{hint.text}</li>
+              {displayedLine.length ? (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={onToggleLine}
+                >
+                  {lineVisible ? "Ocultar variante" : "Ver variante"}
+                </button>
+              ) : null}
+            </div>
+            {lineVisible && displayedLine.length ? (
+              <ol
+                className="feedback-line"
+                aria-label="Variante recomendada verificada"
+              >
+                {displayedLine.map((move, index) => (
+                  <li key={`${move}-${index}`}>{move}</li>
                 ))}
               </ol>
-            </details>
-          ) : null}
+            ) : null}
+            {helpLevel === "guided" && feedback.hints.length ? (
+              <details>
+                <summary>Pistas para profundizar</summary>
+                <ol>
+                  {feedback.hints.map((hint) => (
+                    <li key={hint.level}>{hint.text}</li>
+                  ))}
+                </ol>
+              </details>
+            ) : null}
+          </div>
           {detailOpen ? (
             <div
               className="feedback-dialog-backdrop"

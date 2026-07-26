@@ -1,5 +1,6 @@
 import { applyMove, createInitialGame } from "@chess-coach/chess-core";
 import { describe, expect, it } from "vitest";
+import { createPostgameReviewStateV1 } from "./postgameReview";
 import {
   activeSessionLine,
   createSessionWorkspace,
@@ -19,8 +20,20 @@ const afterE4E5Bc4Bc5 = () =>
   applyMove(afterE4E5Bc4(), { from: "f8", to: "c5" });
 const afterE4E5Bc4Nf6 = () =>
   applyMove(afterE4E5Bc4(), { from: "g8", to: "f6" });
+const foolsMate = () =>
+  ["f2f3", "e7e5", "g2g4", "d8h4"].reduce(
+    (session, uci) =>
+      applyMove(session, {
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+      }),
+    createInitialGame(),
+  );
 
-function ancestryIds(workspace: ReturnType<typeof createSessionWorkspace>, lineId: string) {
+function ancestryIds(
+  workspace: ReturnType<typeof createSessionWorkspace>,
+  lineId: string,
+) {
   const ids: string[] = [];
   let current = workspace.lines.find((line) => line.id === lineId);
   for (let steps = 0; steps < workspace.lines.length + 1; steps += 1) {
@@ -109,10 +122,7 @@ describe("SessionWorkspace", () => {
   });
 
   it("reparents direct descendants to the remaining line with the longest shared prefix", () => {
-    let workspace = navigateSessionLine(
-      createSessionWorkspace(afterE4E5()),
-      2,
-    );
+    let workspace = navigateSessionLine(createSessionWorkspace(afterE4E5()), 2);
     workspace = updateActiveSessionLine(
       createTrialLine(workspace, "trial-a"),
       (line) => ({
@@ -142,10 +152,7 @@ describe("SessionWorkspace", () => {
   });
 
   it("reparents multiple direct children without creating sibling cycles", () => {
-    let workspace = navigateSessionLine(
-      createSessionWorkspace(afterE4E5()),
-      2,
-    );
+    let workspace = navigateSessionLine(createSessionWorkspace(afterE4E5()), 2);
     workspace = updateActiveSessionLine(
       createTrialLine(workspace, "trial-a"),
       (line) => ({
@@ -180,5 +187,28 @@ describe("SessionWorkspace", () => {
     });
     expect(ancestryIds(deleted, "trial-c1")).toEqual(["main"]);
     expect(ancestryIds(deleted, "trial-c2")).toEqual(["main"]);
+  });
+
+  it("preserves a frozen post-game review while navigating and managing lines", () => {
+    const review = createPostgameReviewStateV1({
+      session: foolsMate(),
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    const base = {
+      ...createSessionWorkspace(afterE4E5()),
+      postgameReview: review,
+    };
+
+    const navigated = navigateSessionLine(base, 1);
+    const trial = createTrialLine(navigated, "trial-1");
+    const promoted = promoteSessionLine(trial, "trial-1");
+    const deleted = deleteSessionLine(promoted, "main");
+
+    expect(navigated.postgameReview).toBe(review);
+    expect(trial.postgameReview).toBe(review);
+    expect(promoted.postgameReview).toBe(review);
+    expect(deleted.postgameReview).toBe(review);
   });
 });

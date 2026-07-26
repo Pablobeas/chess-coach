@@ -34,6 +34,8 @@ import {
   isRetryTargetActive,
   opponentNameForBackend,
   opponentResponseStillMatches,
+  postgameReviewAutoOpenDelayMs,
+  postgameReviewAutoOpenCandidate,
   readCurrentBuildId,
   retryAnalysisTarget,
   rebuildCoachRetryTurn,
@@ -41,6 +43,7 @@ import {
   shouldWaitForCoachRetry,
   shouldStartCoachRetry,
   shouldReplacePendingFeedback,
+  shouldCapturePostgameReview,
   workspaceTransitionNotice,
 } from "./App";
 import {
@@ -224,6 +227,64 @@ describe("historical board interaction", () => {
     expect(canPlayBoard(false, false, "white", "white")).toBe(true);
     expect(canPlayBoard(true, false, "white", "white")).toBe(false);
     expect(canPlayBoard(false, false, "black", "white")).toBe(false);
+  });
+});
+
+describe("post-game review orchestration", () => {
+  it("only captures a mate review at the exact terminal cursor and opens immediately for reduced motion", () => {
+    const mate = loadPgn("1. f3 e5 2. g4 Qh4# 0-1");
+    const atEnd = createSessionWorkspace(mate);
+    const browsing = {
+      ...atEnd,
+      lines: atEnd.lines.map((line) => ({
+        ...line,
+        timeline: { ...line.timeline, cursor: mate.history.length - 1 },
+      })),
+    };
+
+    expect(shouldCapturePostgameReview(atEnd)).toBe(true);
+    expect(shouldCapturePostgameReview(browsing)).toBe(false);
+    expect(postgameReviewAutoOpenDelayMs(true)).toBe(0);
+    expect(postgameReviewAutoOpenDelayMs(false)).toBeGreaterThan(300);
+  });
+
+  it("auto-opens each terminal review identity only once despite progress updates", () => {
+    vi.useFakeTimers();
+    try {
+      const open = vi.fn();
+      let handled: string | undefined;
+      const first = postgameReviewAutoOpenCandidate("review-a", true, handled);
+      expect(first).toBe("review-a");
+      handled = first;
+      window.setTimeout(open, postgameReviewAutoOpenDelayMs(true));
+      vi.runOnlyPendingTimers();
+      expect(open).toHaveBeenCalledTimes(1);
+
+      // Closing the dialog or receiving more evidence leaves the review ID
+      // unchanged, therefore neither may schedule another automatic open.
+      expect(
+        postgameReviewAutoOpenCandidate("review-a", true, handled),
+      ).toBeUndefined();
+      expect(
+        postgameReviewAutoOpenCandidate("review-a", true, handled),
+      ).toBeUndefined();
+      expect(open).toHaveBeenCalledTimes(1);
+
+      const second = postgameReviewAutoOpenCandidate("review-b", true, handled);
+      expect(second).toBe("review-b");
+      window.setTimeout(open, postgameReviewAutoOpenDelayMs(true));
+      vi.runOnlyPendingTimers();
+      expect(open).toHaveBeenCalledTimes(2);
+
+      // A reset/new session clears the handled identity, so an identical
+      // deterministic terminal line can be announced in a later game.
+      handled = undefined;
+      expect(postgameReviewAutoOpenCandidate("review-a", true, handled)).toBe(
+        "review-a",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

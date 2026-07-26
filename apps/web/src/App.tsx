@@ -31,6 +31,7 @@ import {
 } from "./boardOrientation";
 import { createAnalysisCache } from "./analysisCache";
 import { GameSetup } from "./GameSetup";
+import { PostgameReviewScreen } from "./PostgameReviewScreen";
 import { createBrowserStockfishEngine } from "./engineClient";
 import { coachSearchPlan } from "./coachSearchPlan";
 import { prewarmCoachPosition } from "./coachPrewarm";
@@ -96,6 +97,15 @@ import {
   updateActiveSessionLine,
   type SessionWorkspace,
 } from "./sessionWorkspace";
+import {
+  createPostgameReviewStateV1,
+  isPostgameReviewPendingForMove,
+  listPostgameReviewTasks,
+  markPostgameReviewUnavailable,
+  mergePostgameReviewEvidence,
+  postgameEvidenceFromAnalysis,
+  seedPostgameReviewFromFeedback,
+} from "./postgameReview";
 import {
   acceptsAnalysisResult,
   clearProvisionalForLineChange,
@@ -487,6 +497,36 @@ export function canPlayBoard(
   playerColor: PlayerColor,
 ): boolean {
   return !manuallyPaused && !engineThinking && sideToMove === playerColor;
+}
+
+export function shouldCapturePostgameReview(
+  workspace: SessionWorkspace,
+): boolean {
+  const line = activeSessionLine(workspace);
+  return (
+    workspace.postgameReview === undefined &&
+    line.timeline.cursor === line.timeline.session.history.length &&
+    line.timeline.session.isCheckmate
+  );
+}
+
+export function postgameReviewAutoOpenDelayMs(
+  prefersReducedMotion: boolean,
+): number {
+  return prefersReducedMotion ? 0 : PIECE_MOVE_DURATION_MS + 120;
+}
+
+/** A review is announced once by identity; progress updates must not reopen it. */
+export function postgameReviewAutoOpenCandidate(
+  reviewId: string | undefined,
+  isCheckmate: boolean,
+  autoOpenedReviewId: string | undefined,
+): string | undefined {
+  return isCheckmate &&
+    reviewId !== undefined &&
+    reviewId !== autoOpenedReviewId
+    ? reviewId
+    : undefined;
 }
 
 export function GameTurnStatus({
@@ -1007,6 +1047,13 @@ export function bindVisualViewportHeight(
 
 export function App() {
   useEffect(() => bindVisualViewportHeight(), []);
+  useEffect(
+    () => () => {
+      if (postgameReviewTimerRef.current !== undefined)
+        window.clearTimeout(postgameReviewTimerRef.current);
+    },
+    [],
+  );
   const recovered = useMemo(getRecoveredState, []);
   const [started, setStarted] = useState(() => recovered !== null);
   const [hasSavedGame, setHasSavedGame] = useState(() => recovered !== null);
@@ -1017,6 +1064,7 @@ export function App() {
     () => recovered?.workspace ?? createSessionWorkspace(initialSnapshot),
   );
   const activeLine = activeSessionLine(workspace);
+  const postgameReview = workspace.postgameReview;
   const workspaceRef = useRef(workspace);
   workspaceRef.current = workspace;
   const timeline = activeLine.timeline;
@@ -1071,6 +1119,8 @@ export function App() {
         )?.record,
   );
   const [positionNotice, setPositionNotice] = useState<PositionNotice>();
+  const [postgameReviewOpen, setPostgameReviewOpen] = useState(false);
+  const postgameSummaryTriggerRef = useRef<HTMLButtonElement>(null);
   const [selected, setSelected] = useState<Square>();
   const [lineVisiblePly, setLineVisiblePly] = useState<number>();
   const [workspaceContextNotice, setWorkspaceContextNotice] = useState("");
@@ -1096,6 +1146,24 @@ export function App() {
   const coachAttemptDeadlinesRef = useRef(
     new Map<string, ReturnType<typeof window.setTimeout>>(),
   );
+  const postgameReviewTimerRef = useRef<number | undefined>(undefined);
+  const postgameAutoOpenedReviewRef = useRef<string | undefined>(undefined);
+  const clearPostgameReviewPresentation = () => {
+    if (postgameReviewTimerRef.current !== undefined)
+      window.clearTimeout(postgameReviewTimerRef.current);
+    postgameReviewTimerRef.current = undefined;
+    postgameAutoOpenedReviewRef.current = undefined;
+    setPostgameReviewOpen(false);
+  };
+  const postgameReviewTaskRef = useRef<
+    | {
+        readonly reviewId: string;
+        readonly moveIndex: number;
+        readonly beforeFen: string;
+        readonly afterFen: string;
+      }
+    | undefined
+  >(undefined);
   const [coachPending, setCoachPending] = useState<{
     readonly identity: AnalysisRequestIdentity;
     readonly startedAt: number;
@@ -1451,6 +1519,175 @@ export function App() {
     );
     return () => window.clearTimeout(timer);
   }, [positionNotice]);
+
+  useEffect(() => {
+    if (!started || !shouldCapturePostgameReview(workspace)) return;
+    setWorkspace((current) => {
+      if (!shouldCapturePostgameReview(current)) return current;
+      const line = activeSessionLine(current);
+      return {
+        ...current,
+        postgameReview: createPostgameReviewStateV1({
+          session: line.timeline.session,
+          lineId: line.id,
+          playerColor,
+          feedbackByPly: line.feedbackByPly,
+        }),
+      };
+    });
+  }, [playerColor, started, workspace]);
+
+  useEffect(() => {
+    if (!postgameReview) {
+      setPostgameReviewOpen(false);
+      return;
+    }
+    const seeded = seedPostgameReviewFromFeedback(
+      postgameReview,
+      feedbackByPly,
+    );
+    if (seeded === postgameReview) return;
+    setWorkspace((current) =>
+      current.postgameReview?.reviewId === postgameReview.reviewId
+        ? { ...current, postgameReview: seeded }
+        : current,
+    );
+  }, [feedbackByPly, postgameReview]);
+
+  useEffect(() => {
+    const candidate = postgameReviewAutoOpenCandidate(
+      postgameReview?.reviewId,
+      game.isCheckmate,
+      postgameAutoOpenedReviewRef.current,
+    );
+    if (!candidate) return;
+    // Record the identity before scheduling. A partial->ready update or a
+    // user dismissal must never create a second automatic opening.
+    postgameAutoOpenedReviewRef.current = candidate;
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    if (postgameReviewTimerRef.current !== undefined)
+      window.clearTimeout(postgameReviewTimerRef.current);
+    postgameReviewTimerRef.current = window.setTimeout(
+      () => setPostgameReviewOpen(true),
+      postgameReviewAutoOpenDelayMs(prefersReducedMotion),
+    );
+    return () => {
+      if (postgameReviewTimerRef.current !== undefined)
+        window.clearTimeout(postgameReviewTimerRef.current);
+    };
+  }, [game.isCheckmate, postgameReview?.reviewId]);
+
+  useEffect(() => {
+    if (!postgameReview || postgameReview.status !== "partial") return;
+    const queued = postgameReviewTaskRef.current;
+    if (queued?.reviewId === postgameReview.reviewId) return;
+    const nextTask = listPostgameReviewTasks(postgameReview).find(
+      (task) =>
+        !isPostgameReviewPendingForMove(
+          postgameReview,
+          feedbackByPly,
+          task.moveIndex,
+        ),
+    );
+    if (!nextTask) return;
+    postgameReviewTaskRef.current = {
+      reviewId: nextTask.reviewId,
+      moveIndex: nextTask.moveIndex,
+      beforeFen: nextTask.beforeFen,
+      afterFen: nextTask.afterFen,
+    };
+    coachQueueRef.current?.enqueue(async (signal) => {
+      try {
+        const engine = (coachEngineRef.current ??=
+          createBrowserStockfishEngine());
+        const limit = coachSearchPlan(settings.enginePreset).limit;
+        const [beforeResult, afterResult] = await Promise.all([
+          coachAnalysisCache.analyze(
+            engine,
+            {
+              id: `${nextTask.reviewId}:before:${nextTask.moveIndex}`,
+              fen: nextTask.beforeFen,
+              perspective: nextTask.color,
+              preset: settings.enginePreset,
+              multiPv: 1,
+              limit,
+            },
+            signal,
+          ),
+          coachAnalysisCache.analyze(
+            engine,
+            {
+              id: `${nextTask.reviewId}:after:${nextTask.moveIndex}`,
+              fen: nextTask.afterFen,
+              perspective: nextTask.color,
+              preset: settings.enginePreset,
+              multiPv: 1,
+              limit,
+            },
+            signal,
+          ),
+        ]);
+        if (signal.aborted) return;
+        const bestLine = beforeResult.lines[0];
+        const playedLine = afterResult.lines[0];
+        if (!bestLine || !playedLine)
+          throw new Error("Missing postgame analysis line");
+        setWorkspace((current) => {
+          const review = current.postgameReview;
+          if (!review || review.reviewId !== nextTask.reviewId) return current;
+          const move = review.snapshot.moves[nextTask.moveIndex];
+          if (
+            !move ||
+            move.beforeFen !== nextTask.beforeFen ||
+            move.afterFen !== nextTask.afterFen
+          )
+            return current;
+          const evidence = postgameEvidenceFromAnalysis({
+            review,
+            moveIndex: nextTask.moveIndex,
+            bestLine,
+            playedLine,
+          });
+          if (!evidence) return current;
+          const nextReview = mergePostgameReviewEvidence(review, evidence);
+          return nextReview === review
+            ? current
+            : { ...current, postgameReview: nextReview };
+        });
+      } catch (error: unknown) {
+        if (signal.aborted || isAbortErrorLike(error)) return;
+        setWorkspace((current) => {
+          const review = current.postgameReview;
+          if (!review || review.reviewId !== nextTask.reviewId) return current;
+          const move = review.snapshot.moves[nextTask.moveIndex];
+          if (
+            !move ||
+            move.beforeFen !== nextTask.beforeFen ||
+            move.afterFen !== nextTask.afterFen
+          )
+            return current;
+          const nextReview = markPostgameReviewUnavailable(review);
+          return nextReview === review
+            ? current
+            : { ...current, postgameReview: nextReview };
+        });
+      } finally {
+        const currentTask = postgameReviewTaskRef.current;
+        if (
+          currentTask?.reviewId === nextTask.reviewId &&
+          currentTask.moveIndex === nextTask.moveIndex
+        )
+          postgameReviewTaskRef.current = undefined;
+      }
+    });
+  }, [
+    coachAnalysisCache,
+    feedbackByPly,
+    postgameReview,
+    settings.enginePreset,
+  ]);
 
   useEffect(
     () => () => {
@@ -2043,6 +2280,8 @@ export function App() {
           cancelCoachPrewarms();
           setProvisionalMoveQuality(undefined);
           coachQueueRef.current?.invalidate();
+          postgameReviewTaskRef.current = undefined;
+          clearPostgameReviewPresentation();
           generation.current += 1;
           clearStoredGame();
           setSettings(resolvedSettings);
@@ -2113,12 +2352,12 @@ export function App() {
     setRetryTarget(undefined);
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
+    postgameReviewTaskRef.current = undefined;
+    clearPostgameReviewPresentation();
     generation.current += 1;
     const initialGame = createLocalGame(initialSnapshot);
     previousHistoryLength.current = initialGame.history.length;
-    setTimeline(replaceNavigationLine(initialGame));
-    setMoveAnnotations([]);
-    setFeedbackByPly([]);
+    setWorkspace(createSessionWorkspace(initialGame));
     setSelected(undefined);
     setPaused(false);
     setSessionError(undefined);
@@ -2228,6 +2467,8 @@ export function App() {
     setWorkspace(createSessionWorkspace(initialSnapshot));
     setHasSavedGame(false);
     setStarted(false);
+    postgameReviewTaskRef.current = undefined;
+    clearPostgameReviewPresentation();
     setPaused(false);
     setMoveAnnotations([]);
     setFeedbackByPly([]);
@@ -2280,12 +2521,12 @@ export function App() {
       setRetryTarget(undefined);
       setProvisionalMoveQuality(undefined);
       coachQueueRef.current?.invalidate();
+      postgameReviewTaskRef.current = undefined;
+      clearPostgameReviewPresentation();
       generation.current += 1;
       const importedGame = createLocalGame(imported);
       previousHistoryLength.current = importedGame.history.length;
-      setTimeline(replaceNavigationLine(importedGame));
-      setMoveAnnotations([]);
-      setFeedbackByPly([]);
+      setWorkspace(createSessionWorkspace(importedGame));
       setSelected(undefined);
       setPaused(false);
       setSessionError(undefined);
@@ -2602,6 +2843,19 @@ export function App() {
               </strong>
               <p>{engineMessage}</p>
             </section>
+            {game.isCheckmate && postgameReview ? (
+              <button
+                ref={postgameSummaryTriggerRef}
+                type="button"
+                className="postgame-summary-trigger"
+                onClick={() => {
+                  postgameAutoOpenedReviewRef.current = postgameReview.reviewId;
+                  setPostgameReviewOpen(true);
+                }}
+              >
+                Ver resumen
+              </button>
+            ) : null}
             <VariationHistory
               workspace={workspace}
               onSelect={selectWorkspaceLine}
@@ -2849,6 +3103,19 @@ export function App() {
           ) : null}
         </div>
       </section>
+      {postgameReview && postgameReviewOpen ? (
+        <PostgameReviewScreen
+          review={postgameReview}
+          onClose={() => {
+            setPostgameReviewOpen(false);
+            window.setTimeout(
+              () => postgameSummaryTriggerRef.current?.focus(),
+              0,
+            );
+          }}
+          onNewGame={reset}
+        />
+      ) : null}
     </main>
   );
 }

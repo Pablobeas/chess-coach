@@ -33,6 +33,8 @@
 
 ## Fase 3 — Sesión y revisión
 
+- [x] Revisión postpartida accesible, responsive y sin pedagogía por movimiento.
+
 - [x] Persistencia local versionada y recuperación.
 - [x] Exportación/importación PGN.
 - [ ] Resumen final y momentos críticos.

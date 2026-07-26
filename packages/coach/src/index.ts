@@ -12,6 +12,8 @@ import {
 } from "@chess-coach/chess-core";
 import type { EngineLine, EngineScore } from "@chess-coach/engine";
 
+export * from "./postgame.js";
+
 export type MoveLabel =
   | "best"
   | "brilliant"

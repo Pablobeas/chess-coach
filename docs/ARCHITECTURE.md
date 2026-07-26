@@ -76,6 +76,11 @@ los registros del usuario. Mientras la búsqueda sigue activa puede mostrar un i
 provisional transitorio, que nunca se persiste. `decodeCoachTurnRecord` acepta v2
 legible y v3 completo; `StoredGame` permanece en v6.
 
+La revisión final se serializa como un snapshot terminal `PostgameSummary v1`.
+Ese snapshot es de solo lectura, se deriva de la sesión activa y no cambia la
+semántica de `SessionWorkspace` ni de `StoredGame`, que siguen en v6. La revisión
+es opcional y se consume como una vista final, no como un estado intermedio.
+
 ## Contrato de análisis
 
 Cada solicitud incluye FEN, límite, MultiPV y perspectiva. Cada resultado incluye
@@ -134,6 +139,10 @@ se lee de caché y, si sigue ejecutándose, se espera la misma búsqueda. La pos
 posterior siempre recibe su búsqueda completa; una puntuación MultiPV calculada en la
 raíz anterior nunca se reutiliza como evaluación del hijo. Abortos y errores nunca
 entran en la caché.
+
+La cola compartida de engine conserva una estrategia secuencial de `missing-only` y
+`cancel-resume`: solo resuelve lo que falta, puede reanudar una petición cancelada si
+sigue siendo la misma identidad y nunca mezcla resultados entre solicitudes distintas.
 
 ## Fuerza del oponente
 

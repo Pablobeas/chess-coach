@@ -14,6 +14,20 @@ El entrenador produce cinco artefactos distintos:
 
 No combines estas capas en una sola cadena de texto interna.
 
+## Revisión postpartida
+
+La revisión postpartida usa `PostgameSummary v1`. Resume únicamente la línea final,
+con los momentos críticos y su contexto, y no convierte cada jugada en una pieza
+pedagógica independiente. `StoredGame` y `SessionWorkspace` siguen en v6; la revisión
+es una vista opcional sobre la partida ya terminada.
+
+## Índice de estabilidad RMS
+
+El índice de estabilidad RMS clasifica cada jugada final en buckets `coverage`,
+`partial` o `no-margin` según la cobertura de las variaciones, la presencia de
+margen y la dispersión entre candidatas. Cada jugador mantiene sus propios buckets;
+no se mezclan estadísticas de blancas y negras en un único contador.
+
 ## Generación de explicaciones sin LLM
 
 El feedback se construye de forma determinista:

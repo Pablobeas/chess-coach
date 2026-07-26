@@ -12,6 +12,7 @@ import {
   loadStoredGame,
   saveStoredGame,
 } from "./persistence";
+import { createPostgameReviewStateV1 } from "./postgameReview";
 import { exportSessionForWorkspace } from "./lineTransitions";
 import {
   activeSessionLine,
@@ -113,6 +114,15 @@ const afterE4E5Bc4 = () => applyMove(afterE4E5(), { from: "f1", to: "c4" });
 const afterE4E5Bc4Nf6 = () =>
   applyMove(afterE4E5Bc4(), { from: "g8", to: "f6" });
 const afterE4E5Nf3 = () => applyMove(afterE4E5(), { from: "g1", to: "f3" });
+const foolsMate = () =>
+  ["f2f3", "e7e5", "g2g4", "d8h4"].reduce(
+    (session, uci) =>
+      applyMove(session, {
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+      }),
+    createInitialGame(),
+  );
 
 function buildVariantWorkspace() {
   let workspace = navigateSessionLine(createSessionWorkspace(afterE4E5()), 2);
@@ -765,6 +775,63 @@ describe("local persistence", () => {
       },
     ]);
     expect(loaded?.workspace.lines[0]?.feedbackByPly[0]?.status).toBe("ready");
+  });
+
+  it("round-trips a partial post-game review without restoring any pending analysis", () => {
+    const storage = memoryStorage();
+    const mate = foolsMate();
+    const review = createPostgameReviewStateV1({
+      session: mate,
+      lineId: "trial-mate",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    const workspace = {
+      ...createSessionWorkspace(mate),
+      activeLineId: "main",
+      postgameReview: review,
+    };
+
+    saveStoredGame(workspace, DEFAULT_SETTINGS, storage);
+
+    const restored = loadStoredGame(storage);
+    expect(restored?.workspace.postgameReview).toEqual(review);
+    expect(restored?.postgameReview?.status).toBe("partial");
+    expect(restored?.postgameReview?.progress).toEqual({
+      completed: 0,
+      total: 4,
+    });
+  });
+
+  it("prefers the workspace post-game review over a stale top-level copy", () => {
+    const storage = memoryStorage();
+    const mate = foolsMate();
+    const review = createPostgameReviewStateV1({
+      session: mate,
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    saveStoredGame(
+      {
+        ...createSessionWorkspace(mate),
+        postgameReview: review,
+      },
+      DEFAULT_SETTINGS,
+      storage,
+    );
+    const stored = JSON.parse(
+      storage.getItem("chess-coach:active-game:v1") ?? "{}",
+    ) as {
+      postgameReview: { progress: { completed: number } };
+      workspace: { postgameReview: unknown };
+    };
+    stored.postgameReview.progress.completed = 99;
+    storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
+
+    const restored = loadStoredGame(storage);
+    expect(restored?.workspace.postgameReview).toEqual(review);
+    expect(restored?.postgameReview).toEqual(review);
   });
 
   it("adds the default Maia-3 Elo when migrating a version two game", () => {

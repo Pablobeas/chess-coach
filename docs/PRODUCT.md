@@ -37,6 +37,10 @@ de evidencia; el entrenador interpreta esa evidencia.
 - Guardado local de partida y exportaciÃ³n PGN.
 - RevisiÃ³n final con momentos crÃ­ticos.
 - Interfaz mÃ³vil, accesible e instalable como PWA.
+- La revisión postpartida usa un snapshot terminal `PostgameSummary v1`; la
+  sesión activa sigue en `SessionWorkspace` v6 y el resumen es opcional.
+- La revisión final muestra solo la línea final y el contexto crítico, no una
+  explicación pedagógica por cada movimiento.
 
 ## Fuera del MVP
 

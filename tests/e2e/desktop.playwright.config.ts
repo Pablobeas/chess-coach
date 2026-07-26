@@ -2,7 +2,11 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: ["desktop-smoke.spec.ts", "opponent-last-move.spec.ts"],
+  testMatch: [
+    "desktop-smoke.spec.ts",
+    "opponent-last-move.spec.ts",
+    "postgame-review.spec.ts",
+  ],
   timeout: 30_000,
   outputDir: "../../output/playwright/desktop-test-results",
   projects: ["chromium", "webkit"].map((browserName) => ({

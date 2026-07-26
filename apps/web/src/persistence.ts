@@ -15,6 +15,10 @@ import {
   type SessionLine,
   type SessionWorkspace,
 } from "./sessionWorkspace";
+import {
+  decodePostgameReviewStateV1,
+  type PostgameReviewStateV1,
+} from "./postgameReview";
 
 export type HelpLevel = "none" | "normal" | "guided";
 
@@ -54,6 +58,7 @@ export interface StoredGame {
   readonly version: 6;
   readonly settings: GameSettings;
   readonly workspace: SessionWorkspace;
+  readonly postgameReview?: PostgameReviewStateV1;
   /** Compatibility projection of the current main line. */
   readonly session: GameSession;
   readonly cursor: number;
@@ -315,6 +320,12 @@ function normalizeVisibleFeedback(
   );
 }
 
+function normalizePostgameReview(
+  value: unknown,
+): PostgameReviewStateV1 | undefined {
+  return decodePostgameReviewStateV1(value);
+}
+
 function isCoachTurnRecord(value: unknown): value is CoachTurnRecord {
   return decodeCoachTurnRecord(value) !== undefined;
 }
@@ -363,6 +374,9 @@ export function loadStoredGame(
     )
       return null;
     if (version === 6) {
+      const topLevelPostgameReview = normalizePostgameReview(
+        candidate.postgameReview,
+      );
       const recovery =
         candidate.recovery === undefined
           ? undefined
@@ -370,16 +384,27 @@ export function loadStoredGame(
       if (recovery === null) return null;
       const parsedWorkspace = parseWorkspace(candidate.workspace);
       const workspace = parsedWorkspace
-        ? migrateLegacyRecovery(parsedWorkspace, recovery)
+        ? migrateLegacyRecovery(
+            parsedWorkspace.postgameReview !== undefined ||
+              topLevelPostgameReview === undefined
+              ? parsedWorkspace
+              : {
+                  ...parsedWorkspace,
+                  postgameReview: topLevelPostgameReview,
+                },
+            recovery,
+          )
         : null;
       if (!workspace) return null;
       const main = workspace.lines.find(
         (line) => line.id === workspace.mainLineId,
       )!;
+      const postgameReview = workspace.postgameReview;
       return {
         version: 6,
         settings,
         workspace,
+        ...(postgameReview === undefined ? {} : { postgameReview }),
         session: main.timeline.session,
         cursor: main.timeline.cursor,
         annotations: main.annotations,
@@ -471,10 +496,12 @@ export function loadStoredGame(
       },
       undefined,
     );
+    const postgameReview = workspace.postgameReview;
     return {
       version: 6,
       settings,
       workspace,
+      ...(postgameReview === undefined ? {} : { postgameReview }),
       session,
       cursor,
       annotations: migratedMain.annotations,
@@ -522,6 +549,9 @@ export function saveStoredGame(
     version: 6,
     settings,
     workspace: normalizeWorkspace(normalizedWorkspace),
+    ...(normalizedWorkspace.postgameReview === undefined
+      ? {}
+      : { postgameReview: normalizedWorkspace.postgameReview }),
     session: main.timeline.session,
     cursor: main.timeline.cursor,
     annotations: main.annotations,
@@ -628,12 +658,14 @@ function parseWorkspace(value: unknown): SessionWorkspace | null {
   const activeLineId = kept.has(candidate.activeLineId)
     ? candidate.activeLineId
     : candidate.mainLineId;
+  const postgameReview = normalizePostgameReview(candidate.postgameReview);
   return {
     version: 6,
     mainLineId: candidate.mainLineId,
     activeLineId,
     revision: candidate.revision!,
     lines: recoveredLines,
+    ...(postgameReview === undefined ? {} : { postgameReview }),
   };
 }
 

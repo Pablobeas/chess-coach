@@ -303,3 +303,18 @@ siendo determinista para una misma identidad de media jugada.
 añaden detectores avanzados fuera del alcance actual —como forks, pins o estructura
 de peones—, y las pruebas semánticas deben comprobar ausencia de invención, no
 copiar frases fijas del motor.
+
+## ADR-019 — Revisión postjaque-mate con snapshot terminal
+
+**Estado:** aceptada.
+
+La revisión final usa un snapshot terminal `PostgameSummary v1` y no altera la
+semántica de `StoredGame` ni `SessionWorkspace`, que continúan en v6. La vista
+postpartida es opcional, consume solo la línea final y expone contexto crítico en
+una interfaz accesible y responsive. No añade pedagogía por movimiento en el
+postgame; el objetivo es resumir la secuencia final, no reexplicar toda la partida.
+
+El índice RMS de estabilidad se versiona como ayuda de revisión final y separa
+buckets por color/jugador. La cola compartida de engine mantiene un modo secuencial
+`missing-only` con `cancel-resume` para no mezclar resultados entre solicitudes
+distintas.

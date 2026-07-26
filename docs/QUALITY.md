@@ -78,6 +78,13 @@ las variantes semánticamente equivalentes se seleccionan de forma determinista 
 identidad, que la misma media jugada conserva la misma familia al recargar y que la
 selección no depende de memoria reciente ni aleatoriedad.
 
+Las evaluaciones de postpartida validan `PostgameSummary v1`, el contrato de
+snapshot terminal y que la revisión solo consume la línea final, no una vista por
+movimiento. La cobertura de estabilidad RMS comprueba los buckets `coverage`,
+`partial` y `no-margin`, y que blancas y negras se calculan en contadores separados.
+Las pruebas de engine cubren la estrategia secuencial `missing-only` y `cancel-resume`
+de la cola compartida.
+
 ## Presupuestos iniciales
 
 - Ninguna espera síncrona del motor en el hilo principal.

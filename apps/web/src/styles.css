@@ -1648,3 +1648,355 @@ button:focus-visible {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Terminal review: an independent, scrollable layer so the fixed mobile board
+ * never has to become a long document when the final report is open. */
+.postgame-review-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(12px, env(safe-area-inset-top))
+    max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
+    max(12px, env(safe-area-inset-left));
+  background: rgb(3 9 7 / 78%);
+  backdrop-filter: blur(8px);
+}
+.postgame-review {
+  display: grid;
+  width: min(980px, 100%);
+  max-height: min(900px, calc(var(--app-viewport-height) - 24px));
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgb(200 220 141 / 10%), transparent 34%),
+    var(--color-surface);
+  box-shadow: var(--shadow-float);
+}
+.postgame-review-header,
+.postgame-review-actions {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px clamp(16px, 3vw, 30px);
+  background: rgb(8 18 14 / 88%);
+}
+.postgame-review-header .eyebrow {
+  margin: 0 0 3px;
+}
+.postgame-review-header h1 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+.postgame-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 2rem;
+  line-height: 1;
+}
+.postgame-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 12px clamp(16px, 3vw, 30px);
+  border-block: 1px solid var(--color-border);
+}
+.postgame-result strong {
+  font-size: 1.1rem;
+}
+.postgame-result-win strong::before {
+  content: "✓ ";
+  color: var(--color-accent-strong);
+}
+.postgame-result-loss strong::before {
+  content: "× ";
+  color: var(--color-danger);
+}
+.postgame-review-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 3vw, 30px);
+}
+.postgame-progress {
+  margin: 0 0 16px;
+  color: var(--color-text-muted);
+  font-size: 0.92rem;
+}
+.postgame-trajectory {
+  margin: 0 0 24px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-muted);
+}
+.postgame-trajectory figcaption {
+  margin-bottom: 8px;
+  font-weight: 800;
+}
+.postgame-trajectory svg {
+  display: block;
+  width: 100%;
+  max-height: 100px;
+}
+.postgame-trajectory-base {
+  stroke: rgb(245 242 232 / 38%);
+  stroke-width: 2;
+}
+.postgame-trajectory-line {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.postgame-trajectory-point {
+  stroke: var(--color-canvas);
+  stroke-width: 2;
+}
+.postgame-trajectory-point-material-edge {
+  fill: #75b7dc;
+}
+.postgame-trajectory-point-checkmate {
+  fill: #f6cf6d;
+}
+.postgame-section-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.postgame-section-heading h2,
+.postgame-phase-section h2,
+.postgame-moves h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.postgame-section-heading p,
+.postgame-moves > p {
+  margin: 5px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}
+.postgame-section-heading > span {
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.postgame-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.postgame-participant {
+  display: grid;
+  gap: 4px;
+  min-height: 112px;
+  padding: 13px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 3%);
+}
+.postgame-participant span,
+.postgame-participant small {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+.postgame-participant strong {
+  font-size: clamp(1.35rem, 4vw, 1.8rem);
+}
+.postgame-buckets {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.postgame-bucket-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.postgame-bucket-group {
+  min-width: 0;
+}
+.postgame-bucket-group h3 {
+  margin: 0 0 7px;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+.postgame-buckets div {
+  min-width: 0;
+  padding: 8px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  text-align: center;
+}
+.postgame-buckets dt {
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+.postgame-buckets dd {
+  margin: 5px 0 0;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+.postgame-phase-section,
+.postgame-moves {
+  margin-top: 28px;
+}
+.postgame-phase-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.postgame-phase-card {
+  min-height: 132px;
+  padding: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 2%);
+}
+.postgame-phase-card h3,
+.postgame-moves h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+.postgame-phase-card dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+.postgame-phase-card dl div {
+  display: grid;
+  gap: 2px;
+}
+.postgame-phase-card dt,
+.postgame-phase-card p {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+.postgame-phase-card dd {
+  margin: 0;
+  font-weight: 900;
+}
+.postgame-phase-card p {
+  margin: 0;
+  line-height: 1.35;
+}
+.postgame-phase-empty {
+  display: grid;
+  min-height: 65px;
+  place-items: center;
+  font-weight: 800;
+  text-align: center;
+}
+.postgame-moves > section {
+  margin-top: 16px;
+}
+.postgame-moves ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.postgame-moves li {
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88rem;
+}
+.postgame-review-actions {
+  position: relative;
+  justify-content: end;
+  border-top: 1px solid var(--color-border);
+}
+.postgame-review-actions button {
+  min-width: 144px;
+  min-height: 44px;
+  border-radius: 11px;
+  font-weight: 900;
+}
+.postgame-new-game {
+  border: 1px solid #dcefa5;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.postgame-summary-trigger {
+  width: 100%;
+  min-height: 44px;
+  margin: 10px 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 11px;
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font-weight: 900;
+}
+@media (max-width: 720px) {
+  .postgame-review-backdrop {
+    align-items: stretch;
+    padding: 0;
+  }
+  .postgame-review {
+    width: 100%;
+    max-height: var(--app-viewport-height);
+    border: 0;
+    border-radius: 0;
+  }
+  .postgame-review-header {
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+  .postgame-review-actions {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+}
+@media (max-width: 460px) {
+  .postgame-bucket-comparison {
+    grid-template-columns: 1fr;
+  }
+  .postgame-buckets {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .postgame-phase-grid {
+    grid-template-columns: 1fr;
+  }
+  .postgame-review-actions {
+    justify-content: stretch;
+  }
+  .postgame-review-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+@media (forced-colors: active) {
+  .postgame-trajectory-line,
+  .postgame-trajectory-base {
+    stroke: CanvasText;
+  }
+  .postgame-trajectory-point {
+    fill: CanvasText;
+    stroke: Canvas;
+  }
+}

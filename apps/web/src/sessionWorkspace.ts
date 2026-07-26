@@ -5,6 +5,7 @@ import {
   moveNavigationCursor,
   type NavigationTimeline,
 } from "./navigationTimeline";
+import type { PostgameReviewStateV1 } from "./postgameReview";
 
 export const MAX_TRIAL_LINES = 5;
 
@@ -24,6 +25,7 @@ export interface SessionWorkspace {
   readonly activeLineId: string;
   readonly lines: readonly SessionLine[];
   readonly revision: number;
+  readonly postgameReview?: PostgameReviewStateV1;
 }
 
 export function createSessionWorkspace(session: GameSession): SessionWorkspace {
@@ -135,7 +137,10 @@ function reparentedFork(
       readonly line: SessionLine;
       readonly sharedPly: number;
     } | null>((current, line) => {
-      if (line.id === child.id || isDescendantLine(workspace, line.id, child.id))
+      if (
+        line.id === child.id ||
+        isDescendantLine(workspace, line.id, child.id)
+      )
         return current;
       const sharedPly = sharedHistoryLength(
         line.timeline.session,
@@ -261,8 +266,7 @@ export function createTrialLine(
   };
   if (trialLines(created).length <= MAX_TRIAL_LINES) return created;
   const oldest = created.lines.find(
-    (candidate) =>
-      candidate.id !== created.mainLineId && candidate.id !== id,
+    (candidate) => candidate.id !== created.mainLineId && candidate.id !== id,
   );
   return oldest ? deleteLineRecord(created, oldest.id) : created;
 }

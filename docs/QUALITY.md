@@ -112,3 +112,6 @@ las brechas de verificaciÃ³n manual estÃ¡n declaradas.
   `readyok` y búsqueda activa, y otro de análisis interrumpido por la jugada del
   rival para confirmar que el broker entrega el control al nuevo actor sin dejar
   estados colgados.
+- La cobertura de preemption distingue reencolado interno único tras rival
+  prioritario, cancelación externa o stale sin reintento y segunda interrupción con
+  caída a `unavailable` y retry manual.

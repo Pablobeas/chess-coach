@@ -246,3 +246,8 @@ consuman el presupuesto de la búsqueda real.
 Esta separación evita falsos negativos en dispositivos lentos y permite que un
 análisis interrumpido por la jugada del rival libere la ruta sin arrastrar un estado
 pendiente al nuevo actor.
+
+La preemption interna del coach por rival prioritario no se considera un error de
+usuario: conserva `pending` y reencola una sola vez. Las cancelaciones externas o los
+resultados stale no reintentan. Si la misma petición sufre una segunda interrupción o
+error, el estado final es `unavailable` y el usuario debe lanzar un retry manual.

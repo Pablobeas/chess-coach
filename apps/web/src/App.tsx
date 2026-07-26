@@ -117,6 +117,34 @@ export function isCurrentCoachRequest(
   return pending?.identity.requestId === requestId;
 }
 
+export function coachFailureAction(
+  error: unknown,
+  outerSignalAborted: boolean,
+  identityActive: boolean,
+  autoAttempts: number,
+): "auto-retry" | "unavailable" | "stale" {
+  if (!identityActive || outerSignalAborted) return "stale";
+  if (
+    error instanceof DOMException &&
+    error.name === "AbortError" &&
+    autoAttempts < 1
+  )
+    return "auto-retry";
+  return "unavailable";
+}
+
+export function shouldReplacePendingFeedback(
+  hasMatchingFeedback: boolean,
+  retryTarget: Pick<RetryAnalysisTarget, "historyIndex" | "uci"> | undefined,
+  historyIndex: number,
+  uci: string,
+): boolean {
+  return (
+    !hasMatchingFeedback ||
+    (retryTarget?.historyIndex === historyIndex && retryTarget.uci === uci)
+  );
+}
+
 export interface RetryAnalysisTarget {
   readonly lineId: string;
   readonly lineRole: "main" | "trial";
@@ -125,6 +153,7 @@ export interface RetryAnalysisTarget {
   readonly uci: string;
   readonly beforeFen: string;
   readonly afterFen: string;
+  readonly autoAttempts: number;
 }
 
 export function retryAnalysisTarget(
@@ -143,6 +172,7 @@ export function retryAnalysisTarget(
     uci: entry.uci,
     beforeFen: entry.beforeFen,
     afterFen: entry.afterFen,
+    autoAttempts: 0,
   };
 }
 
@@ -1252,10 +1282,18 @@ export function App() {
     const historyIndex = retryTarget?.historyIndex ?? game.history.length - 1;
     const move = game.history[historyIndex];
     if (!started || historyIndex < 0 || !move) return;
+    const replacesPendingRetry =
+      retryTarget?.historyIndex === historyIndex &&
+      retryTarget.uci === move.uci;
     if (
-      feedbackByPly.some(
-        (entry) =>
-          entry.historyIndex === historyIndex && entry.uci === move.uci,
+      !shouldReplacePendingFeedback(
+        feedbackByPly.some(
+          (entry) =>
+            entry.historyIndex === historyIndex && entry.uci === move.uci,
+        ),
+        replacesPendingRetry ? retryTarget : undefined,
+        historyIndex,
+        move.uci,
       )
     )
       return;
@@ -1476,6 +1514,29 @@ export function App() {
           )
         )
           return;
+        const failureAction = coachFailureAction(
+          error,
+          signal.aborted,
+          true,
+          retryTarget?.autoAttempts ?? 0,
+        );
+        if (failureAction === "stale") return;
+        if (failureAction === "auto-retry") {
+          setRetryTarget({
+            lineId: analysisIdentity.lineId,
+            lineRole: analysisIdentity.lineRole,
+            ...(analysisIdentity.fork === undefined
+              ? {}
+              : { fork: analysisIdentity.fork }),
+            historyIndex,
+            uci: move.uci,
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            autoAttempts: 1,
+          });
+          setCoachRetry((attempt) => attempt + 1);
+          return;
+        }
         setProvisionalMoveQuality((current) =>
           current?.historyIndex === historyIndex && current.uci === move.uci
             ? undefined

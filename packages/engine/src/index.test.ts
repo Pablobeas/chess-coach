@@ -717,6 +717,103 @@ describe("UCI worker engine", () => {
     }
   });
 
+  it("completes a retry coach pair after an opponent preempts the first analysis", async () => {
+    const worker = new ControlledUciWorker();
+    const broker = createUciWorkerBroker(worker);
+    await broker.ready();
+
+    const firstCoach = broker.analyze({
+      id: "coach-initial-after-user-move",
+      fen: initialPosition,
+      perspective: "white",
+      multiPv: 2,
+      limit: { kind: "time", milliseconds: 700 },
+    });
+
+    await expect
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
+      .toEqual(["go movetime 700"]);
+
+    const opponent = broker.chooseMove({
+      ...defaultOpponentRequest,
+      id: "opponent-after-e4",
+      fen: openingAfterE4,
+      initialFen: initialPosition,
+      moves: ["e2e4"],
+    });
+
+    await expect.poll(() => worker.messages.includes("stop")).toBe(true);
+    await expect
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
+      .toEqual(["go movetime 700", "go movetime 180"]);
+
+    worker.emit("info depth 10 nodes 600 multipv 1 score cp -57 pv c7c5 g1f3");
+    worker.emit("info depth 10 nodes 600 multipv 2 score cp -40 pv e7e5 g1f3");
+    worker.emit("bestmove c7c5");
+
+    await expect(firstCoach).rejects.toMatchObject({ name: "AbortError" });
+    await expect(opponent).resolves.toMatchObject({
+      id: "opponent-after-e4",
+      move: "c7c5",
+      backend: "stockfish-wasm",
+    });
+
+    const retryBefore = broker.analyze({
+      id: "coach-retry-before",
+      fen: initialPosition,
+      perspective: "white",
+      multiPv: 2,
+      limit: { kind: "time", milliseconds: 700 },
+    });
+    const retryAfter = broker.analyze({
+      id: "coach-retry-after",
+      fen: openingAfterE4,
+      perspective: "white",
+      multiPv: 1,
+      limit: { kind: "time", milliseconds: 700 },
+    });
+
+    await expect
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
+      .toEqual(["go movetime 700", "go movetime 180", "go movetime 700"]);
+
+    worker.emit("info depth 12 nodes 1200 multipv 1 score cp 36 pv e2e4 e7e5");
+    worker.emit("info depth 12 nodes 1200 multipv 2 score cp 24 pv d2d4 d7d5");
+    worker.emit("bestmove e2e4");
+
+    await expect
+      .poll(() =>
+        worker.messages.filter((message) => message.startsWith("go ")),
+      )
+      .toEqual([
+        "go movetime 700",
+        "go movetime 180",
+        "go movetime 700",
+        "go movetime 700",
+      ]);
+
+    worker.emit("info depth 11 nodes 900 multipv 1 score cp -32 pv e7e5 g1f3");
+    worker.emit("bestmove e7e5");
+
+    await expect(retryBefore).resolves.toMatchObject({
+      id: "coach-retry-before",
+      lines: [
+        { rank: 1, moves: ["e2e4", "e7e5"] },
+        { rank: 2, moves: ["d2d4", "d7d5"] },
+      ],
+    });
+    await expect(retryAfter).resolves.toMatchObject({
+      id: "coach-retry-after",
+      lines: [{ rank: 1, moves: ["e7e5", "g1f3"] }],
+    });
+  });
+
   it("publishes normalized progress snapshots before the final result without a second search", async () => {
     const worker = new FakeUciWorker({
       info: [

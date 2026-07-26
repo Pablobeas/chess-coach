@@ -15,6 +15,7 @@ import {
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
+  coachFailureAction,
   canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
@@ -23,6 +24,7 @@ import {
   opponentNameForBackend,
   readCurrentBuildId,
   retryAnalysisTarget,
+  shouldReplacePendingFeedback,
   workspaceTransitionNotice,
 } from "./App";
 import { createSessionWorkspace, createTrialLine } from "./sessionWorkspace";
@@ -221,6 +223,43 @@ describe("coach feedback states", () => {
     const pendingB = { identity: { requestId: "coach-b" } };
     expect(isCurrentCoachRequest(pendingB, "coach-a")).toBe(false);
     expect(isCurrentCoachRequest(pendingB, "coach-b")).toBe(true);
+  });
+
+  it("classifies internal coach preemption without retrying invalidated work", () => {
+    const internalAbort = new DOMException("preempted", "AbortError");
+    expect(coachFailureAction(internalAbort, false, true, 0)).toBe(
+      "auto-retry",
+    );
+    expect(coachFailureAction(internalAbort, true, true, 0)).toBe("stale");
+    expect(coachFailureAction(internalAbort, false, true, 1)).toBe(
+      "unavailable",
+    );
+    expect(coachFailureAction(new Error("engine"), false, true, 0)).toBe(
+      "unavailable",
+    );
+    expect(coachFailureAction(internalAbort, false, false, 0)).toBe("stale");
+  });
+
+  it("only replaces a matching pending feedback for an explicit retry target", () => {
+    expect(
+      shouldReplacePendingFeedback(
+        true,
+        { historyIndex: 0, uci: "e2e4" },
+        0,
+        "e2e4",
+      ),
+    ).toBe(true);
+    expect(
+      shouldReplacePendingFeedback(
+        true,
+        { historyIndex: 1, uci: "c7c5" },
+        0,
+        "e2e4",
+      ),
+    ).toBe(false);
+    expect(shouldReplacePendingFeedback(false, undefined, 0, "e2e4")).toBe(
+      true,
+    );
   });
 
   it("keeps the exact player ply as the retry target after a Maia reply", () => {

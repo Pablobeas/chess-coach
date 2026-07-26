@@ -201,6 +201,13 @@ preemption del sistema: si la app vuelve al frente después de una pausa, el
 bootstrap y el handshake siguen teniendo su margen propio antes de empezar a contar
 la búsqueda real.
 
+Cuando el coach cede temporalmente la CPU al rival prioritario, esa preemption interna
+no se presenta como fallo: el estado puede seguir en `pending` y se reencola una sola
+vez tras completar la jugada del rival. En cambio, una cancelación externa o una
+respuesta stale no se reintenta. Si una segunda preemption o cualquier error vuelve a
+interrumpir la misma petición, el resultado pasa a `unavailable` y la UI ofrece
+reintento manual.
+
 La composición de la UI se decide por ancho de pantalla: en <=720 px la experiencia
 usa una vista fija con tablero, resumen, navegación y acciones compactas; en
 orientación horizontal se reorganiza en dos columnas. El shell móvil bloquea el

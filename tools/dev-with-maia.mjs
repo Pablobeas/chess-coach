@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 as pathWin32 } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -102,8 +102,8 @@ export function createViteSpawnSpec({
     const windowsPnpm =
       pnpmCommand === undefined
         ? (() => {
-            const corepackCommand = join(
-              dirname(nodeExecutablePath),
+            const corepackCommand = pathWin32.join(
+              pathWin32.dirname(nodeExecutablePath),
               "corepack.cmd",
             );
             if (corepackExists(corepackCommand)) {

@@ -234,6 +234,31 @@ normaliza cualquier estado pendiente como no disponible al restaurar, y los aná
 terminan siempre en `ready` o `unavailable`. El resultado tardío solo se aplica si la
 misma jugada sigue vigente.
 
+## ADR-017 — Espejo público de artefactos con GitHub Pages
+
+**Estado:** aceptada.
+
+El repositorio privado sigue siendo la fuente de verdad y el repositorio público
+`chess-coach-play` solo publica artefactos estáticos generados desde el commit exacto
+de origen. La conexión es unidireccional: el flujo de CI construye `build:pages`,
+valida el árbol resultante y lo sincroniza con el repo público mediante una deploy key
+SSH mínima con acceso de escritura solo al espejo. No existe edición manual del lado
+público ni sincronización bidireccional.
+
+La publicación usa una base `/chess-coach-play/` separada de Sites/root y conserva la
+misma ruta offline-first del producto: la app publicada sigue usando Stockfish/WASM
+local para análisis y feedback, y no introduce Maia hosted ni dependencias remotas en
+la experiencia de Pages.
+
+El disparador operativo queda en `push` a `main` y `workflow_dispatch`. Un rollback se
+resuelve revirtiendo el commit de origen o repoblando el espejo con una versión
+anterior validada; el commit publicado debe quedar trazable en el historial del repo
+público para poder auditar qué árbol exacto se difundió.
+
+La validación mínima antes de publicar incluye `pnpm check`, `pnpm build:pages` y la
+validación del árbol generado. Si falla la sincronización, la versión pública anterior
+permanece como referencia hasta que una publicación nueva complete la cadena entera.
+
 ## ADR-016 — Timeouts separados para bootstrap, ready y búsqueda
 
 **Estado:** aceptada.

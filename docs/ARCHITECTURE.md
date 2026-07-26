@@ -174,6 +174,20 @@ aplicaciÃ³n debe conservar el mismo contrato funcional cuando no haya conexiÃ
 o cualquier otro modelo de lenguaje no forma parte de la arquitectura aprobada del
 MVP; una prueba futura requerirÃ­a una decisiÃ³n nueva, opt-in y fallback determinista.
 
+## Publicación pública y espejo de Pages
+
+El repositorio privado es la fuente de verdad. El repositorio público `chess-coach-play`
+solo actúa como espejo de artefactos estáticos y no admite edición manual del producto.
+La conexión entre ambos lados es unidireccional: el flujo de CI publica el árbol
+generado desde el commit exacto del repo privado y deja trazabilidad por hash, no por
+contenido recreado a mano.
+
+`pnpm build:pages` construye el artefacto público con base `/chess-coach-play/`, separado
+del despliegue de Sites/root, e incluye los activos necesarios para que la PWA funcione
+desde GitHub Pages. Esta vía conserva el modelo offline-first: la app publicada sigue
+dependiendo de Stockfish/WASM local para análisis y feedback, y no introduce Maia
+hosted ni ningún backend remoto en la ruta pública.
+
 ## Licencias
 
 Antes de integrar un binario Stockfish/WASM se registrarÃ¡n versiÃ³n, URL de origen,

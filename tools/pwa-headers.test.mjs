@@ -20,3 +20,12 @@ test("PWA headers permit local Worker and WASM execution", () => {
     assertCompatibleHeaders("apps/web/dist/_headers");
   }
 });
+
+test("Stockfish launcher resolves its engine next to the worker instead of from the origin root", () => {
+  const launcher = readFileSync(
+    "apps/web/public/stockfish/launcher.js",
+    "utf8",
+  );
+  assert.doesNotMatch(launcher, /:\s*"\/stockfish\//);
+  assert.match(launcher, /new URL\(engineFile, self\.location\.href\)/);
+});

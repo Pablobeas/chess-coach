@@ -98,6 +98,17 @@ Una funcionalidad pasa cuando `pnpm check` termina correctamente, sus criterios 
 aceptaciÃ³n estÃ¡n cubiertos, la revisiÃ³n independiente no tiene hallazgos crÃ­ticos y
 las brechas de verificaciÃ³n manual estÃ¡n declaradas.
 
+## Publicación en Pages
+
+- La publicación parte del commit exacto del repositorio privado y solo sincroniza el
+  árbol de artefactos estáticos hacia `chess-coach-play`.
+- `pnpm build:pages` debe generar una base `/chess-coach-play/` válida para recursos,
+  service worker y fallback 404 sin depender de Sites/root.
+- La ruta pública conserva el modo offline-first, el análisis local con Stockfish/WASM
+  y excluye Maia hosted o cualquier backend remoto en la experiencia publicada.
+- Un rollback válido restaura un commit o versión anterior del repo público y vuelve a
+  ejecutar el mismo flujo de validación antes de anunciarlo como publicado.
+
 ## Cobertura actual
 
 - Unitarias y de integración cubren la identidad semántica de media jugada, la

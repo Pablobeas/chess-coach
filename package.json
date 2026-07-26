@@ -12,6 +12,7 @@
     "dev:web": "pnpm --filter @chess-coach/web dev",
     "build": "pnpm -r --if-present build",
     "build:sites": "node tools/build-sites.mjs",
+    "build:pages": "pnpm --filter @chess-coach/web build:pages",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm test:tools && pnpm -r --if-present test",
     "test:tools": "node --test tools/*.test.mjs",

@@ -14,10 +14,11 @@ import {
   type UciWorkerLike,
 } from "@chess-coach/engine";
 import { createLocalMaia3Opponent } from "./maia3Client";
+import { applicationUrl } from "./applicationUrl";
 
-const LAUNCHER = "/stockfish/launcher.js";
-const WASM_ENGINE = "/stockfish/stockfish-18-lite-single.js";
-const WASM = "/stockfish/stockfish-18-lite-single.wasm";
+const LAUNCHER = "stockfish/launcher.js";
+const WASM_ENGINE = "stockfish/stockfish-18-lite-single.js";
+const WASM = "stockfish/stockfish-18-lite-single.wasm";
 
 export interface BrowserEngineEnvironment {
   readonly origin: string;
@@ -191,12 +192,11 @@ export function detectBrowserStockfishRuntimeProfile(
 }
 
 function createWorker(backend: StockfishBackend): Worker {
-  const script = new URL(
+  const script = applicationUrl(
     backend === "stockfish-wasm" ? WASM_ENGINE : LAUNCHER,
-    window.location.origin,
   );
   if (backend === "stockfish-wasm") {
-    const wasm = new URL(WASM, window.location.origin).toString();
+    const wasm = applicationUrl(WASM).toString();
     script.hash = encodeURIComponent(wasm);
   } else {
     script.searchParams.set("engine", "asm");

@@ -1,6 +1,7 @@
 node_modules/
 .pnpm-store/
 dist/
+apps/web/dist-pages/
 coverage/
 .playwright-cli/
 output/playwright/

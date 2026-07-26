@@ -37,9 +37,10 @@
 - [ ] Resumen final y momentos críticos.
 - [x] Configuración de accesibilidad y nivel de ayuda.
 
-## Fase 4 — Preparación pública
+## Fase 4 — Preparación pública (en progreso)
 
 - [x] Base PWA instalable y service worker.
+- [ ] Espejo público privado→público automatizado con Pages, build:pages y rollback trazable.
 - [ ] E2E móvil/escritorio y perfil de rendimiento.
 - [x] Layout responsive validado en viewport móvil y escritorio.
 - [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.

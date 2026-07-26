@@ -2,7 +2,29 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 
-const dist = resolve(process.cwd(), "dist");
+function readOption(name) {
+  const option = `--${name}=`;
+  const argument = process.argv.find((value) => value.startsWith(option));
+  return argument?.slice(option.length);
+}
+
+function normalizeBase(base) {
+  if (
+    !base.startsWith("/") ||
+    base.startsWith("//") ||
+    !base.endsWith("/") ||
+    base.includes("?") ||
+    base.includes("#") ||
+    base.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error(`Invalid PWA base: ${base}`);
+  }
+  return base;
+}
+
+const dist = resolve(process.cwd(), readOption("dist") ?? "dist");
+const base = normalizeBase(readOption("base") ?? "/");
+const isPagesBuild = process.argv.includes("--pages");
 const ignored = new Set([
   "_headers",
   "sw.js",
@@ -43,7 +65,7 @@ const buildId = (
 )
   .replace(/[^a-zA-Z0-9._-]/g, "-")
   .slice(0, 64);
-const precache = assets.map(({ path }) => `/${path}`);
+const precache = assets.map(({ path }) => `${base}${path}`);
 
 const version = JSON.stringify({ buildId, assets: precache }, null, 2) + "\n";
 const indexPath = resolve(dist, "index.html");
@@ -76,14 +98,37 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
   const url = new URL(request.url);
   if (request.mode === "navigate") {
-    event.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match("/index.html")) || fetch(request)));
+    event.respondWith(caches.open(CACHE).then(async (cache) => (await cache.match(${JSON.stringify(`${base}index.html`)})) || fetch(request)));
     return;
   }
   event.respondWith(caches.open(CACHE).then((cache) => cache.match(request).then((cached) => cached || fetch(request))));
 });
 `;
+const manifestPath = resolve(dist, "manifest.webmanifest");
+const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+const baseManifestPath = (path) =>
+  typeof path === "string" && path.startsWith("/")
+    ? `${base}${path.slice(1)}`
+    : path;
+manifest.id = base;
+manifest.scope = base;
+manifest.start_url = base;
+manifest.icons = manifest.icons?.map((icon) => ({
+  ...icon,
+  src: baseManifestPath(icon.src),
+}));
 await Promise.all([
   writeFile(indexPath, index.replaceAll("__CHESS_COACH_BUILD_ID__", buildId)),
+  writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`),
   writeFile(resolve(dist, "version.json"), version),
   writeFile(resolve(dist, "sw.js"), worker),
+  ...(isPagesBuild
+    ? [
+        writeFile(
+          resolve(dist, "404.html"),
+          index.replaceAll("__CHESS_COACH_BUILD_ID__", buildId),
+        ),
+        writeFile(resolve(dist, ".nojekyll"), ""),
+      ]
+    : []),
 ]);

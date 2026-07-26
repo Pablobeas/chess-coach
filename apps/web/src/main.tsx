@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { APPLICATION_BASE, applicationUrl } from "./applicationUrl";
 import { PWA_ACTIVATE_EVENT, PWA_UPDATE_EVENT } from "./pwaUpdate";
 import "./styles.css";
 
@@ -39,7 +40,10 @@ function registerServiceWorker() {
     if (reloadAfterActivation) window.location.reload();
   });
   void navigator.serviceWorker
-    .register("/sw.js", { updateViaCache: "none" })
+    .register(applicationUrl("sw.js").toString(), {
+      scope: APPLICATION_BASE,
+      updateViaCache: "none",
+    })
     .then((registration) => {
       announceWaitingUpdate(registration);
       registration.addEventListener("updatefound", () => {

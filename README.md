@@ -51,6 +51,13 @@ pnpm check
 pnpm format:check
 ```
 
+## Publicación estática
+
+`pnpm build:pages` crea `apps/web/dist-pages` para GitHub Pages bajo
+`/chess-coach-play/`. El artefacto incluye el fallback `404.html`, `.nojekyll`,
+el service worker con ese alcance y Stockfish local (WASM con fallback ASM.js).
+No sustituye `pnpm build:sites`, que conserva el paquete de Sites actual.
+
 ## Desarrollo con Codex
 
 Abre Codex desde la raíz. Codex carga `AGENTS.md`, `.codex/config.toml` y los

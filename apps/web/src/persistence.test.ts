@@ -244,14 +244,17 @@ describe("local persistence", () => {
       "trial-1",
     ]);
     expect(loaded?.workspace.lines[1]).toMatchObject({
-      timeline: { cursor: 1, session: { history: [{ uci: "e2e4" }, { uci: "e7e5" }] } },
+      timeline: {
+        cursor: 1,
+        session: { history: [{ uci: "e2e4" }, { uci: "e7e5" }] },
+      },
       fork: { lineId: "main", ply: 1 },
       annotations: [],
       feedbackByPly: [],
     });
-    expect(JSON.parse(storage.getItem("chess-coach:active-game:v1") ?? "{}")).toHaveProperty(
-      "recovery",
-    );
+    expect(
+      JSON.parse(storage.getItem("chess-coach:active-game:v1") ?? "{}"),
+    ).toHaveProperty("recovery");
   });
 
   it("round-trips a promoted workspace with line order, forks, cursors and isolated feedback", () => {
@@ -269,19 +272,17 @@ describe("local persistence", () => {
       "trial-b",
       "trial-c",
     ]);
-    expect(restored?.workspace.lines.map((line) => line.timeline.cursor)).toEqual(
-      [2, 3, 1],
-    );
     expect(
-      restored?.workspace.lines.map((line) => line.fork ?? null),
-    ).toEqual([
+      restored?.workspace.lines.map((line) => line.timeline.cursor),
+    ).toEqual([2, 3, 1]);
+    expect(restored?.workspace.lines.map((line) => line.fork ?? null)).toEqual([
       null,
       { lineId: "trial-a", ply: 2 },
       { lineId: "trial-a", ply: 2 },
     ]);
-    expect(restored?.workspace.lines[1]?.feedbackByPly.map((entry) => entry.status)).toEqual(
-      ["unavailable", "ready"],
-    );
+    expect(
+      restored?.workspace.lines[1]?.feedbackByPly.map((entry) => entry.status),
+    ).toEqual(["unavailable", "ready"]);
     expect(restored?.workspace.lines[0]?.feedbackByPly).toEqual([]);
     expect(restored?.session.history.map((move) => move.uci)).toEqual([
       "e2e4",
@@ -293,9 +294,9 @@ describe("local persistence", () => {
     const navigated = navigateSessionLine(restored!.workspace, 2);
     expect(activeSessionLine(navigated).id).toBe("trial-b");
     expect(activeSessionLine(navigated).timeline.cursor).toBe(2);
-    expect(exportSessionForWorkspace(navigated).history.map((move) => move.uci)).toEqual(
-      ["e2e4", "e7e5", "f1c4"],
-    );
+    expect(
+      exportSessionForWorkspace(navigated).history.map((move) => move.uci),
+    ).toEqual(["e2e4", "e7e5", "f1c4"]);
   });
 
   it("rejects a corrupt trial without replacing a valid main line", () => {
@@ -355,21 +356,25 @@ describe("local persistence", () => {
       "trial-b",
       "trial-a",
     ]);
-    expect(restored?.workspace.lines.find((line) => line.id === "trial-b")?.fork).toEqual(
-      { lineId: "trial-a", ply: 2 },
-    );
+    expect(
+      restored?.workspace.lines.find((line) => line.id === "trial-b")?.fork,
+    ).toEqual({ lineId: "trial-a", ply: 2 });
   });
 
   it("rejects a legacy recovery snapshot with an invalid cursor", () => {
     const storage = memoryStorage();
     const session = applyMove(createInitialGame(), { from: "e2", to: "e4" });
     saveStoredGame(session, DEFAULT_SETTINGS, storage, [], [], 1);
-    addLegacyRecovery(storage, {
-      session,
-      cursor: 1,
-      annotations: [],
-      feedbackByPly: [],
-    }, 5);
+    addLegacyRecovery(
+      storage,
+      {
+        session,
+        cursor: 1,
+        annotations: [],
+        feedbackByPly: [],
+      },
+      5,
+    );
     const stored = JSON.parse(
       storage.getItem("chess-coach:active-game:v1") ?? "{}",
     ) as { recovery: { cursor: number } };
@@ -532,6 +537,68 @@ describe("local persistence", () => {
     expect(loadStoredGame(storage)?.feedbackByPly[0]?.status).toBe(
       "unavailable",
     );
+  });
+
+  it("keeps the workspace feedback as the source of truth for version 6 saves", () => {
+    const storage = memoryStorage();
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const workspace = updateActiveSessionLine(
+      createSessionWorkspace(after),
+      (line) => ({
+        ...line,
+        feedbackByPly: [
+          {
+            historyIndex: 0,
+            uci: "e2e4",
+            actor: "user",
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            status: "ready",
+            record: recordFor(before, after, "user"),
+          },
+        ],
+      }),
+    );
+    saveStoredGame(workspace, DEFAULT_SETTINGS, storage);
+
+    const stored = JSON.parse(
+      storage.getItem("chess-coach:active-game:v1") ?? "{}",
+    ) as {
+      feedbackByPly: Array<Record<string, unknown>>;
+      workspace: { lines: Array<{ feedbackByPly: unknown[] }> };
+    };
+    stored.feedbackByPly = [
+      {
+        historyIndex: 0,
+        uci: "e2e4",
+        actor: "user",
+        beforeFen: before.fen,
+        afterFen: after.fen,
+        status: "pending",
+      },
+    ];
+    stored.workspace.lines[0]!.feedbackByPly = [
+      {
+        historyIndex: 0,
+        uci: "e2e4",
+        actor: "user",
+        beforeFen: before.fen,
+        afterFen: after.fen,
+        status: "ready",
+        record: recordFor(before, after, "user"),
+      },
+    ];
+    storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
+
+    const loaded = loadStoredGame(storage);
+    expect(loaded?.feedbackByPly).toMatchObject([
+      {
+        status: "ready",
+        uci: "e2e4",
+      },
+    ]);
+    expect(loaded?.workspace.lines[0]?.feedbackByPly[0]?.status).toBe("ready");
   });
 
   it("adds the default Maia-3 Elo when migrating a version two game", () => {

@@ -1,0 +1,242 @@
+import { expect, test, type Page } from "@playwright/test";
+
+const opponentMoves: Record<string, string> = {
+  e2e4: "e7e5",
+  d2d4: "d7d5",
+  c2c4: "c7c5",
+};
+
+async function playMove(page: Page, from: string, to: string) {
+  await page.getByRole("button", { name: new RegExp(`^${from},`) }).click();
+  await page
+    .getByRole("button", { name: new RegExp(`^${to},.*destino legal`) })
+    .click();
+}
+
+async function start(page: Page) {
+  await page.goto("/");
+  const begin = page.getByRole("button", { name: "Comenzar partida" });
+  if (await begin.count()) await begin.click();
+}
+
+function installMaiaMock(page: Page, delayMs = 0) {
+  return page.route("**/maia3-api/move", async (route) => {
+    const body = (route.request().postDataJSON() ?? {}) as {
+      id?: string;
+      moves?: string[];
+    };
+    const moves = body.moves ?? [];
+    const userMove = moves.filter((_move, index) => index % 2 === 0).at(-1);
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: body.id ?? "e2e",
+        backend: "maia3-local",
+        move: opponentMoves[userMove ?? ""] ?? "e7e5",
+        candidates: [],
+      }),
+    });
+  });
+}
+
+async function moveButton(page: Page, san: string) {
+  return page.getByRole("button", { name: new RegExp(`^${san}(,|$)`) }).last();
+}
+
+test.describe("mobile fixed game and coach feedback", () => {
+  test.describe.configure({ mode: "serial" });
+
+  test("rival may answer first; coach settles without a pending deadlock", async ({
+    page,
+  }) => {
+    const consoleErrors: string[] = [];
+    page.on(
+      "console",
+      (message) =>
+        message.type() === "error" && consoleErrors.push(message.text()),
+    );
+    await installMaiaMock(page, 1_500);
+    await start(page);
+    await playMove(page, "e2", "e4");
+
+    // The opponent response is allowed to arrive while the coach is still queued.
+    await expect(await moveButton(page, "e4")).toBeVisible({ timeout: 20_000 });
+    await expect(await moveButton(page, "e5")).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.locator(".feedback").filter({
+        has: page.getByRole("heading", {
+          name: /Feedback de tu jugada|No pude terminar este análisis/,
+        }),
+      }),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText("Estoy revisando esa decisión…", { exact: true }),
+    ).toHaveCount(0);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("unavailable analysis exposes retry and retry does not rewrite history", async ({
+    page,
+  }) => {
+    await page.route("**/stockfish/**", (route) => route.abort("failed"));
+    await installMaiaMock(page);
+    await start(page);
+    await playMove(page, "e2", "e4");
+    await expect(
+      page.getByRole("heading", { name: "No pude terminar este análisis" }),
+    ).toBeVisible({ timeout: 20_000 });
+    const before = await page.evaluate(() =>
+      localStorage.getItem("chess-coach:active-game:v1"),
+    );
+    await page.getByRole("button", { name: "Reintentar análisis" }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: /Estoy revisando esa decisión|No pude terminar este análisis/,
+      }),
+    ).toBeVisible({ timeout: 2_000 });
+    const after = await page.evaluate(() =>
+      localStorage.getItem("chess-coach:active-game:v1"),
+    );
+    const beforeWorkspace = before ? JSON.parse(before).workspace : null;
+    const afterWorkspace = after ? JSON.parse(after).workspace : null;
+    expect(
+      afterWorkspace.lines.map(
+        (line: { timeline: { session: { history: unknown[] } } }) =>
+          line.timeline.session.history.length,
+      ),
+    ).toEqual(
+      beforeWorkspace.lines.map(
+        (line: { timeline: { session: { history: unknown[] } } }) =>
+          line.timeline.session.history.length,
+      ),
+    );
+  });
+
+  test("mobile dialogs, tree, keyboard and layout remain usable", async ({
+    page,
+  }) => {
+    await installMaiaMock(page);
+    await start(page);
+    await playMove(page, "e2", "e4");
+    await expect(page.locator(".feedback")).toBeVisible({ timeout: 20_000 });
+
+    const detail = page.getByRole("button", { name: "Ver explicación" });
+    if (await detail.count()) {
+      await detail.click();
+      await expect(
+        page.getByRole("dialog", { name: /Análisis de/ }),
+      ).toBeVisible();
+      await expect(
+        page
+          .getByRole("dialog", { name: /Análisis de/ })
+          .getByRole("button", { name: "Cerrar" }),
+      ).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("dialog", { name: /Análisis de/ }),
+      ).toHaveCount(0);
+      await expect(detail).toBeFocused();
+    }
+    const treeTrigger = page.getByRole("button", {
+      name: /^(Principal|Variante)$/,
+    });
+    await page.waitForTimeout(750);
+    await treeTrigger.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("dialog", { name: "Árbol de jugadas" }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Árbol de jugadas" })
+        .getByRole("button", { name: "Cerrar" }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("dialog", { name: "Árbol de jugadas" }),
+    ).toHaveCount(0);
+    await expect(treeTrigger).toBeFocused();
+
+    const evaluation = page.locator(".mobile-evaluation");
+    const moreTrigger = page.locator(".mobile-more-toggle");
+    await moreTrigger.focus();
+    await page.keyboard.press("Enter");
+    const moreDialog = page.getByRole("dialog", { name: "Más acciones" });
+    await expect(moreDialog).toBeVisible();
+    await expect(
+      moreDialog.getByRole("button", { name: "Cerrar" }),
+    ).toBeFocused();
+    await expect(moreDialog.getByLabel("Capturas actuales")).toBeVisible();
+    await expect(moreDialog).toContainText("Exportar PGN");
+    await expect(moreDialog).toContainText("Reiniciar partida");
+    await expect(moreDialog).toContainText("Abandonar partida");
+    await expect(moreDialog).toContainText("Ajustes visibles");
+    const evaluationToggle = moreDialog.getByLabel("Mostrar evaluación");
+    if (await evaluationToggle.isChecked()) await evaluationToggle.uncheck();
+    await expect(evaluation).toHaveCount(0);
+    await evaluationToggle.check();
+    await expect(evaluation).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(moreDialog).toHaveCount(0);
+    await expect(moreTrigger).toBeFocused();
+
+    const back = page.getByRole("button", { name: /Retroceder una jugada/ });
+    await back.focus();
+    await page.keyboard.press("ArrowRight");
+    const metrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      scrollHeight: document.documentElement.scrollHeight,
+      innerHeight: window.innerHeight,
+      squares: [...document.querySelectorAll(".square")].map((el) =>
+        Math.min(
+          el.getBoundingClientRect().width,
+          el.getBoundingClientRect().height,
+        ),
+      ),
+    }));
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
+    expect(metrics.squares.every((size) => size >= 32)).toBe(true);
+  });
+
+  test("long feedback stays clamped without compressing the board", async ({
+    page,
+  }) => {
+    test.skip(
+      (test.info().project.use.viewport as { width?: number } | undefined)
+        ?.width !== 320,
+      "Long-copy fixture targets the narrow mobile viewport",
+    );
+    await installMaiaMock(page);
+    await start(page);
+    await playMove(page, "e2", "e4");
+    await expect(page.locator(".feedback-copy")).toBeVisible({
+      timeout: 20_000,
+    });
+    const metrics = await page.locator(".feedback-copy").evaluate((element) => {
+      element.textContent = Array.from(
+        { length: 80 },
+        () =>
+          "Una explicación larga de prueba para comprobar el recorte accesible.",
+      ).join(" ");
+      const style = getComputedStyle(element);
+      const board = document
+        .querySelector<HTMLElement>(".board")
+        ?.getBoundingClientRect();
+      return {
+        lineClamp: style.webkitLineClamp,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        boardWidth: board?.width ?? 0,
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      };
+    });
+    expect(metrics.lineClamp).not.toBe("none");
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
+    expect(metrics.boardWidth).toBeGreaterThanOrEqual(280);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
+  });
+});

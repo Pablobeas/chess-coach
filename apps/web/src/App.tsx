@@ -97,6 +97,7 @@ import {
   createAnalysisRequestIdentity,
   exportSessionForWorkspace,
   syncActiveLineSession,
+  type AnalysisRequestIdentity,
 } from "./lineTransitions";
 import {
   activateWaitingServiceWorker,
@@ -107,6 +108,12 @@ import {
 
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
+export function isCurrentCoachRequest(
+  pending: { readonly identity: { readonly requestId: string } } | undefined,
+  requestId: string,
+): boolean {
+  return pending?.identity.requestId === requestId;
+}
 type PositionNotice = {
   readonly kind: "check" | "checkmate";
   readonly checkedColor: PlayerColor;
@@ -159,7 +166,10 @@ export function workspaceTransitionNotice(
 ): string {
   if (next.mainLineId !== previous.mainLineId)
     return "La variante se promovió a principal.";
-  if (next.activeLineId !== previous.activeLineId && next.lines.length <= previous.lines.length)
+  if (
+    next.activeLineId !== previous.activeLineId &&
+    next.lines.length <= previous.lines.length
+  )
     return "La continuación se fusionó con una variante existente.";
   if (next.lines.length < previous.lines.length)
     return "Se eliminó automáticamente la variante más antigua.";
@@ -331,19 +341,44 @@ function CapturedTray({
   );
 }
 
-function AdvicePanel({
+export function AdvicePanel({
   feedbackEntry,
   helpLevel,
   selectedMaia,
   lineVisible,
   onToggleLine,
+  slow,
+  onRetry,
 }: {
   readonly feedbackEntry: MoveFeedbackRecord | undefined;
   readonly helpLevel: GameSettings["helpLevel"];
   readonly selectedMaia: boolean;
   readonly lineVisible: boolean;
   readonly onToggleLine: () => void;
+  readonly slow: boolean;
+  readonly onRetry: () => void;
 }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const detailTriggerRef = useRef<HTMLButtonElement>(null);
+  const detailCloseRef = useRef<HTMLButtonElement>(null);
+  const detailWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!detailOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [detailOpen]);
+  useEffect(() => {
+    if (detailOpen) detailCloseRef.current?.focus();
+    if (!detailOpen && detailWasOpenRef.current)
+      (
+        detailTriggerRef.current ??
+        document.querySelector<HTMLButtonElement>(".feedback-detail-trigger")
+      )?.focus();
+    detailWasOpenRef.current = detailOpen;
+  }, [detailOpen]);
   const feedback = feedbackEntry?.record;
   const displayedLine = useMemo(
     () =>
@@ -372,6 +407,12 @@ function AdvicePanel({
           className="feedback feedback-empty"
           aria-labelledby="feedback-title"
         >
+          {slow ? (
+            <p className="feedback-slow" role="status">
+              El análisis tarda más de lo habitual. Puedes continuar; este
+              intento terminará con una opción para reintentarlo.
+            </p>
+          ) : null}
           <h2 id="feedback-title">Estoy revisando esa decisión…</h2>
           <p>El tablero sigue disponible mientras termina el análisis local.</p>
         </section>
@@ -380,6 +421,11 @@ function AdvicePanel({
           className="feedback feedback-empty"
           aria-labelledby="feedback-title"
         >
+          <div className="feedback-actions">
+            <button type="button" onClick={onRetry}>
+              Reintentar análisis
+            </button>
+          </div>
           <h2 id="feedback-title">No pude terminar este análisis</h2>
           <p>
             La partida sigue siendo válida; puedes continuar o volver a esta
@@ -396,7 +442,7 @@ function AdvicePanel({
                 : ""}
             </strong>
           </div>
-          <p>{feedback.copy?.text}</p>
+          <p className="feedback-copy">{feedback.copy?.text}</p>
           <p className="feedback-meta">
             Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
             {feedback.motif.confidence
@@ -404,6 +450,14 @@ function AdvicePanel({
               : ""}
           </p>
           <div className="feedback-actions">
+            <button
+              ref={detailTriggerRef}
+              type="button"
+              className="secondary feedback-detail-trigger"
+              onClick={() => setDetailOpen(true)}
+            >
+              Ver explicación
+            </button>
             {displayedLine.length ? (
               <button
                 type="button"
@@ -434,6 +488,46 @@ function AdvicePanel({
               </ol>
             </details>
           ) : null}
+          {detailOpen ? (
+            <div
+              className="feedback-dialog-backdrop"
+              role="presentation"
+              onMouseDown={() => setDetailOpen(false)}
+            >
+              <section
+                className="feedback-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="feedback-detail-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="moves-heading">
+                  <h2 id="feedback-detail-title">
+                    Análisis de {feedback.turn.playedSan}
+                  </h2>
+                  <button
+                    ref={detailCloseRef}
+                    type="button"
+                    className="secondary"
+                    onClick={() => setDetailOpen(false)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <p>{feedback.copy?.text}</p>
+                <p className="feedback-meta">
+                  Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
+                </p>
+                {displayedLine.length ? (
+                  <ol className="feedback-line" aria-label="Mejor variante">
+                    {displayedLine.map((move, index) => (
+                      <li key={`${move}-${index}`}>{move}</li>
+                    ))}
+                  </ol>
+                ) : null}
+              </section>
+            </div>
+          ) : null}
         </section>
       ) : selectedMaia ? (
         <section
@@ -456,6 +550,26 @@ function AdvicePanel({
         </section>
       )}
     </aside>
+  );
+}
+
+export function MobileEvaluationBar({
+  visible,
+  label,
+}: {
+  readonly visible: boolean;
+  readonly label: string;
+}) {
+  if (!visible) return null;
+  return (
+    <div
+      className="mobile-evaluation"
+      role="status"
+      aria-label={`Evaluación local: ${label}`}
+    >
+      <span className="mobile-evaluation-fill" aria-hidden="true" />
+      <span>Evaluación local: {label}</span>
+    </div>
   );
 }
 
@@ -576,6 +690,22 @@ export function App() {
   const generation = useRef(0);
   const coachRequestSequence = useRef(0);
   const activeCoachRequestId = useRef<string | undefined>(undefined);
+  const [coachPending, setCoachPending] = useState<{
+    readonly identity: AnalysisRequestIdentity;
+    readonly startedAt: number;
+  }>();
+  const coachPendingRef = useRef<typeof coachPending>(undefined);
+  coachPendingRef.current = coachPending;
+  const [coachSlow, setCoachSlow] = useState(false);
+  const [coachRetry, setCoachRetry] = useState(0);
+  const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const mobileTreeTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileMoreTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileTreeCloseRef = useRef<HTMLButtonElement>(null);
+  const mobileMoreCloseRef = useRef<HTMLButtonElement>(null);
+  const treeWasOpenRef = useRef(false);
+  const moreWasOpenRef = useRef(false);
   const game = useMemo(
     () => createLocalGame(sessionAtNavigationCursor(timeline)),
     [timeline],
@@ -689,10 +819,75 @@ export function App() {
       : !hasFuture
         ? latestUserFeedbackEntry
         : undefined;
+  useEffect(() => {
+    if (!coachPending) {
+      setCoachSlow(false);
+      return;
+    }
+    const slowTimer = window.setTimeout(() => setCoachSlow(true), 4_000);
+    const watchdog = window.setTimeout(() => {
+      const { identity } = coachPending;
+      if (!isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
+        return;
+      if (
+        !acceptsAnalysisResult(
+          workspaceRef.current,
+          identity,
+          identity.requestId,
+        )
+      )
+        return;
+      setFeedbackByPly((entries) =>
+        entries.map((entry) =>
+          entry.historyIndex === identity.historyIndex &&
+          entry.uci === identity.uci &&
+          entry.beforeFen === identity.beforeFen &&
+          entry.afterFen === identity.afterFen &&
+          entry.status === "pending"
+            ? { ...entry, status: "unavailable" }
+            : entry,
+        ),
+      );
+      setCoachPending((current) =>
+        current?.identity.requestId === identity.requestId
+          ? undefined
+          : current,
+      );
+      if (isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
+        setCoachSlow(false);
+    }, 20_000);
+    return () => {
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(watchdog);
+    };
+  }, [coachPending]);
   const destinations = useMemo(
     () => (selected ? legalDestinations(game, selected) : []),
     [game, selected],
   );
+  useEffect(() => {
+    if (!mobileTreeOpen && !mobileMoreOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMobileTreeOpen(false);
+      setMobileMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileMoreOpen, mobileTreeOpen]);
+  useEffect(() => {
+    if (mobileTreeOpen) mobileTreeCloseRef.current?.focus();
+    if (!mobileTreeOpen && treeWasOpenRef.current)
+      mobileTreeTriggerRef.current?.focus();
+    treeWasOpenRef.current = mobileTreeOpen;
+  }, [mobileTreeOpen]);
+  useEffect(() => {
+    if (mobileMoreOpen) mobileMoreCloseRef.current?.focus();
+    if (!mobileMoreOpen && moreWasOpenRef.current)
+      mobileMoreTriggerRef.current?.focus();
+    moreWasOpenRef.current = mobileMoreOpen;
+  }, [mobileMoreOpen]);
 
   const beginMoveAnimation = (
     position: GameSession,
@@ -837,7 +1032,8 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!started || paused || isBrowsingHistory || game.turn !== engineColor) return;
+    if (!started || paused || isBrowsingHistory || game.turn !== engineColor)
+      return;
     const engineMayStart = game.history.length === 0 && engineColor === "white";
     if (game.history.length === 0 && !engineMayStart) return;
     const controller = new AbortController();
@@ -903,7 +1099,10 @@ export function App() {
             position.history.length !== requestHistoryLength
           )
             return current;
-          const next = syncActiveLineSession(current, applyEngineLine(position, uci));
+          const next = syncActiveLineSession(
+            current,
+            applyEngineLine(position, uci),
+          );
           setWorkspaceContextNotice(workspaceTransitionNotice(current, next));
           return next;
         });
@@ -978,6 +1177,7 @@ export function App() {
       `coach-${historyIndex}-${move.uci}-${++coachRequestSequence.current}`,
     );
     activeCoachRequestId.current = analysisIdentity.requestId;
+    setCoachPending({ identity: analysisIdentity, startedAt: Date.now() });
     setFeedbackByPly((entries) => [
       ...entries.filter((entry) => entry.historyIndex !== historyIndex),
       { ...identity, status: "pending" },
@@ -1129,12 +1329,12 @@ export function App() {
             ? undefined
             : current,
         );
+        setCoachPending((current) =>
+          current?.identity.requestId === analysisIdentity.requestId
+            ? undefined
+            : current,
+        );
       } catch (error) {
-        if (
-          signal.aborted ||
-          (error instanceof DOMException && error.name === "AbortError")
-        )
-          return;
         if (
           activeCoachRequestId.current !== analysisIdentity.requestId ||
           !acceptsAnalysisResult(
@@ -1156,6 +1356,11 @@ export function App() {
               : entry,
           ),
         );
+        setCoachPending((current) =>
+          current?.identity.requestId === analysisIdentity.requestId
+            ? undefined
+            : current,
+        );
       }
     });
   }, [
@@ -1166,6 +1371,7 @@ export function App() {
     settings.enginePreset,
     settings.helpLevel,
     started,
+    coachRetry,
   ]);
 
   useEffect(() => {
@@ -1233,7 +1439,9 @@ export function App() {
   }
 
   const selectSquare = (square: Square) => {
-    if (!canPlayBoard(paused, engineState === "thinking", game.turn, playerColor))
+    if (
+      !canPlayBoard(paused, engineState === "thinking", game.turn, playerColor)
+    )
       return;
     if (selected && destinations.includes(square)) {
       setProvisionalMoveQuality(undefined);
@@ -1253,9 +1461,10 @@ export function App() {
         // A move from a historical cursor is always a candidate. This remains
         // true for an identical UCI move so the opponent is recalculated.
         const source = activeSessionLine(current);
-        const forked = source.timeline.cursor < source.timeline.session.history.length
-          ? createTrialLine(current, `variation-${Date.now()}`)
-          : current;
+        const forked =
+          source.timeline.cursor < source.timeline.session.history.length
+            ? createTrialLine(current, `variation-${Date.now()}`)
+            : current;
         const next = syncActiveLineSession(forked, nextSession);
         const notice = workspaceTransitionNotice(forked, next);
         setWorkspaceContextNotice(
@@ -1266,7 +1475,8 @@ export function App() {
         );
         return next;
       });
-      if (isBrowsingHistory) setWorkspaceContextNotice("Se creó una variante desde el historial.");
+      if (isBrowsingHistory)
+        setWorkspaceContextNotice("Se creó una variante desde el historial.");
       setSelected(undefined);
       return;
     }
@@ -1460,6 +1670,24 @@ export function App() {
     setWorkspaceContextNotice("La variante se eliminó.");
   };
 
+  const retryCoachAnalysis = () => {
+    if (!adviceEntry || adviceEntry.status !== "unavailable") return;
+    setFeedbackByPly((entries) =>
+      entries.filter(
+        (entry) =>
+          !(
+            entry.historyIndex === adviceEntry.historyIndex &&
+            entry.uci === adviceEntry.uci &&
+            entry.beforeFen === adviceEntry.beforeFen &&
+            entry.afterFen === adviceEntry.afterFen
+          ),
+      ),
+    );
+    setCoachSlow(false);
+    setCoachPending(undefined);
+    setCoachRetry((attempt) => attempt + 1);
+  };
+
   return (
     <main className="shell">
       {waitingServiceWorker ? (
@@ -1516,10 +1744,20 @@ export function App() {
         <p className="visually-hidden" role="status" aria-atomic="true">
           {workspaceContextNotice}
         </p>
+        <MobileEvaluationBar
+          visible={settings.showEvaluation}
+          label={
+            adviceEntry?.record?.assessment
+              ? qualityMeta[adviceEntry.record.assessment.label].label
+              : "sin evaluación aún"
+          }
+        />
         <div className="game-layout">
           <AdvicePanel
             feedbackEntry={adviceEntry}
             helpLevel={settings.helpLevel}
+            slow={coachSlow && adviceEntry?.status === "pending"}
+            onRetry={retryCoachAnalysis}
             lineVisible={lineVisiblePly === adviceEntry?.historyIndex}
             onToggleLine={() =>
               setLineVisiblePly((current) =>
@@ -1726,6 +1964,16 @@ export function App() {
               onSelect={selectWorkspaceLine}
               onDelete={deleteWorkspaceLine}
             />
+            <button
+              ref={mobileTreeTriggerRef}
+              type="button"
+              className="mobile-tree-toggle"
+              onClick={() => setMobileTreeOpen(true)}
+            >
+              {workspace.activeLineId === workspace.mainLineId
+                ? "Principal"
+                : "Variante"}
+            </button>
             <div className="session-actions" aria-label="Acciones de partida">
               <div
                 className="history-controls"
@@ -1794,6 +2042,14 @@ export function App() {
                   </button>
                 </div>
               </details>
+              <button
+                ref={mobileMoreTriggerRef}
+                type="button"
+                className="mobile-more-toggle"
+                onClick={() => setMobileMoreOpen(true)}
+              >
+                Más
+              </button>
             </div>
             {sessionError ? (
               <div className="session-error" role="alert">
@@ -1806,6 +2062,148 @@ export function App() {
               </div>
             ) : null}
           </aside>
+          {mobileTreeOpen ? (
+            <div
+              className="mobile-tree-sheet-backdrop"
+              role="presentation"
+              onMouseDown={() => setMobileTreeOpen(false)}
+            >
+              <section
+                className="mobile-tree-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="mobile-tree-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="moves-heading">
+                  <h2 id="mobile-tree-title">Árbol de jugadas</h2>
+                  <button
+                    ref={mobileTreeCloseRef}
+                    type="button"
+                    className="secondary"
+                    onClick={() => setMobileTreeOpen(false)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <VariationHistory
+                  workspace={workspace}
+                  onSelect={(lineId, cursor) => {
+                    selectWorkspaceLine(lineId, cursor);
+                    setMobileTreeOpen(false);
+                  }}
+                  onDelete={deleteWorkspaceLine}
+                />
+              </section>
+            </div>
+          ) : null}
+          {mobileMoreOpen ? (
+            <div
+              className="mobile-more-sheet-backdrop"
+              role="presentation"
+              onMouseDown={() => setMobileMoreOpen(false)}
+            >
+              <section
+                className="mobile-more-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="mobile-more-title"
+                tabIndex={-1}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="moves-heading">
+                  <h2 id="mobile-more-title">Más acciones</h2>
+                  <button
+                    ref={mobileMoreCloseRef}
+                    type="button"
+                    className="secondary"
+                    onClick={() => setMobileMoreOpen(false)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <section
+                  className="mobile-captures"
+                  aria-label="Capturas actuales"
+                >
+                  <CapturedTray
+                    capturer={playerColor}
+                    captured={capturedByColor[playerColor].map(
+                      (capture) => capture.piece,
+                    )}
+                    label="Capturadas por ti"
+                  />
+                  <CapturedTray
+                    capturer={engineColor}
+                    captured={capturedByColor[engineColor].map(
+                      (capture) => capture.piece,
+                    )}
+                    label={`Capturadas por ${opponentName}`}
+                  />
+                </section>
+                <fieldset className="mobile-settings">
+                  <legend>Ajustes visibles</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={settings.showEvaluation}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          showEvaluation: event.target.checked,
+                        }))
+                      }
+                    />{" "}
+                    Mostrar evaluación
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={settings.showArrows}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          showArrows: event.target.checked,
+                        }))
+                      }
+                    />{" "}
+                    Mostrar flecha de última jugada
+                  </label>
+                </fieldset>
+                <p className="mobile-settings-note">
+                  El color, rival y fuerza se eligen al iniciar una partida
+                  nueva; no se cambian a mitad de partida.
+                </p>
+                <div className="mobile-more-actions">
+                  <button type="button" onClick={downloadPgn}>
+                    Exportar PGN
+                  </button>
+                  <label className="file-button">
+                    Importar PGN
+                    <input
+                      type="file"
+                      accept=".pgn,text/plain,application/x-chess-pgn"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void importPgnFile(file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  <button type="button" onClick={reset}>
+                    Reiniciar partida
+                  </button>
+                  <button
+                    type="button"
+                    className="danger-action"
+                    onClick={abandon}
+                  >
+                    Abandonar partida
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </div>
       </section>
     </main>

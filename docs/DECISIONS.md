@@ -220,3 +220,16 @@ La tabla `Hash` deja de fijarse a 64 MB en todos los dispositivos. El runtime lo
 adapta a 16/32/64 MB segÃƒÆ’Ã‚Âºn memoria expuesta y concurrencia para reducir presiÃƒÆ’Ã‚Â³n en
 dispositivos lentos sin romper la partida. El fallback ASM.js permanece disponible solo
 cuando el backend WASM no puede arrancar.
+
+## ADR-015 — Shell móvil fijo y feedback por media jugada
+
+**Estado:** aceptada.
+
+En pantallas de hasta 720 px la partida usa un shell fijo con safe areas, tablero
+prioritario, resumen compacto del entrenador, árbol/variantes dentro de paneles y
+acciones secundarias agrupadas. El escritorio conserva su composición previa.
+
+El feedback se identifica por media jugada y no por revisión mutable. La persistencia
+normaliza cualquier estado pendiente como no disponible al restaurar, y los análisis
+terminan siempre en `ready` o `unavailable`. El resultado tardío solo se aplica si la
+misma jugada sigue vigente.

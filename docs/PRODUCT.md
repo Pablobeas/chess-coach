@@ -67,3 +67,12 @@ Las APIs gratuitas se pueden evaluar para mejoras no esenciales, pero deben tene
 fallback local, lÃ­mites y privacidad documentados. La partida, el anÃ¡lisis y el
 feedback principal funcionan completamente sin red. No se enviarÃ¡n FEN, PGN ni datos
 del usuario a terceros sin una funciÃ³n explÃ­cita y consentimiento informado.
+
+## Experiencia actual
+
+- En móvil, la interfaz de partida usa un shell fijo hasta 720 px, con safe areas,
+  tablero protagonista, resumen compacto del entrenador y acciones agrupadas en un
+  dock o menú.
+- El feedback visible muestra primero un resumen breve y abre el detalle completo en
+  un panel desplazable.
+- En escritorio no se altera la composición actual.

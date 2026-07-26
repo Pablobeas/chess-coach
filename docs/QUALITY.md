@@ -97,3 +97,14 @@ deben repetir de forma mecÃ¡nica la misma familia de plantilla.
 Una funcionalidad pasa cuando `pnpm check` termina correctamente, sus criterios de
 aceptaciÃ³n estÃ¡n cubiertos, la revisiÃ³n independiente no tiene hallazgos crÃ­ticos y
 las brechas de verificaciÃ³n manual estÃ¡n declaradas.
+
+## Cobertura actual
+
+- Unitarias y de integración cubren la identidad semántica de media jugada, la
+  cancelación, el manejo de resultados tardíos y la transición de `pending` a
+  `ready`/`unavailable`.
+- Las regresiones de UI deben incluir móvil y escritorio con Chromium y WebKit en
+  320x568, 390x844 y 568x320.
+- La verificación móvil confirma que el documento no desplaza la pantalla en uso
+  normal, que el tablero y el resumen siguen visibles y que el feedback termina en
+  tiempo o informa error recuperable.

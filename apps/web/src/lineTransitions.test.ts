@@ -1,7 +1,4 @@
-import {
-  applyMove,
-  createInitialGame,
-} from "@chess-coach/chess-core";
+import { applyMove, createInitialGame } from "@chess-coach/chess-core";
 import { describe, expect, it } from "vitest";
 import {
   createAnalysisRequestIdentity,
@@ -64,18 +61,48 @@ describe("line transitions", () => {
 
   it("rejects late results after switching or promoting a line", () => {
     const workspace = createSessionWorkspace(createInitialGame());
-    const identity = createAnalysisRequestIdentity(workspace, "coach-1");
+    const identity = createAnalysisRequestIdentity(
+      updateActiveSessionLine(workspace, (line) => ({
+        ...line,
+        timeline: {
+          session: applyMove(createInitialGame(), { from: "e2", to: "e4" }),
+          cursor: 1,
+        },
+      })),
+      "coach-1",
+      "user",
+    );
     const trial = createTrialLine(workspace, "trial-1");
     expect(acceptsAnalysisResult(trial, identity, "coach-1")).toBe(false);
     const promoted = promoteSessionLine(trial, "trial-1");
     expect(acceptsAnalysisResult(promoted, identity, "coach-1")).toBe(false);
   });
 
-  it("accepts a response after normal updates of the same line", () => {
-    const workspace = createSessionWorkspace(createInitialGame());
-    const identity = createAnalysisRequestIdentity(workspace, "coach-1");
-    const normalUpdate = updateActiveSessionLine(workspace, (line) => ({
+  it("accepts a response after multiple revisions of the same line, including the rival reply", () => {
+    const afterUserMove = applyMove(createInitialGame(), {
+      from: "e2",
+      to: "e4",
+    });
+    const workspace = createSessionWorkspace(afterUserMove);
+    const identity = createAnalysisRequestIdentity(
+      workspace,
+      "coach-1",
+      "user",
+    );
+    expect(identity).toMatchObject({
+      lineId: "main",
+      lineRole: "main",
+      historyIndex: 0,
+      ply: 1,
+      actor: "user",
+      uci: "e2e4",
+      beforeFen: createInitialGame().fen,
+      afterFen: afterUserMove.fen,
+    });
+
+    const annotated = updateActiveSessionLine(workspace, (line) => ({
       ...line,
+      annotations: [{ historyIndex: 0, uci: "e2e4", label: "good" }],
       feedbackByPly: [
         {
           historyIndex: 0,
@@ -87,13 +114,68 @@ describe("line transitions", () => {
         },
       ],
     }));
-    expect(normalUpdate.lines[0]?.revision).toBeGreaterThan(identity.lineRevision);
-    expect(acceptsAnalysisResult(normalUpdate, identity, "coach-1")).toBe(true);
-    const stale = navigateSessionLine(normalUpdate, 0);
-    expect(acceptsAnalysisResult(stale, identity, "coach-1")).toBe(false);
-    expect(acceptsAnalysisResult(normalUpdate, identity, "coach-2")).toBe(
-      false,
+    expect(acceptsAnalysisResult(annotated, identity, "coach-1")).toBe(true);
+
+    const browsingHistory = navigateSessionLine(annotated, 0);
+    expect(acceptsAnalysisResult(browsingHistory, identity, "coach-1")).toBe(
+      true,
     );
+
+    const rivalReply = syncActiveLineSession(
+      annotated,
+      applyMove(afterUserMove, { from: "e7", to: "e5" }),
+    );
+    expect(acceptsAnalysisResult(rivalReply, identity, "coach-1")).toBe(true);
+    expect(acceptsAnalysisResult(rivalReply, identity, "coach-2")).toBe(false);
+  });
+
+  it("rejects a result when the exact move identity changes on the same line", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const workspace = createSessionWorkspace(e4);
+    const identity = createAnalysisRequestIdentity(
+      workspace,
+      "coach-1",
+      "user",
+    );
+
+    const changed = updateActiveSessionLine(workspace, (line) => ({
+      ...line,
+      timeline: {
+        session: applyMove(createInitialGame(), { from: "d2", to: "d4" }),
+        cursor: 1,
+      },
+    }));
+
+    expect(acceptsAnalysisResult(changed, identity, "coach-1")).toBe(false);
+  });
+
+  it("rejects a result after deleting or merging away the originating line", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const base = navigateSessionLine(createSessionWorkspace(e4), 1);
+    const trial = updateActiveSessionLine(
+      createTrialLine(base, "trial-1"),
+      (line) => ({
+        ...line,
+        timeline: { session: e4, cursor: 1 },
+      }),
+    );
+    const identity = createAnalysisRequestIdentity(trial, "coach-1", "user");
+
+    const deleted = deleteSessionLine(trial, "trial-1");
+    expect(acceptsAnalysisResult(deleted, identity, "coach-1")).toBe(false);
+
+    const duplicate = updateActiveSessionLine(
+      createTrialLine(
+        navigateSessionLine(selectSessionLine(trial, "main"), 1),
+        "trial-2",
+      ),
+      (line) => ({
+        ...line,
+        timeline: { session: e4, cursor: 1 },
+      }),
+    );
+    const merged = syncActiveLineSession(duplicate, e4);
+    expect(acceptsAnalysisResult(merged, identity, "coach-1")).toBe(false);
   });
 
   it("exports the main session while a different trial is active", () => {
@@ -156,7 +238,10 @@ describe("line transitions", () => {
     expect(merged.lines.find((line) => line.id === "trial-2")).toBeUndefined();
 
     const base = updateActiveSessionLine(
-      createTrialLine(navigateSessionLine(selectSessionLine(merged, "main"), 1), "trial-3"),
+      createTrialLine(
+        navigateSessionLine(selectSessionLine(merged, "main"), 1),
+        "trial-3",
+      ),
       (line) => ({
         ...line,
         timeline: { session: e4, cursor: 1 },
@@ -188,12 +273,9 @@ describe("line transitions", () => {
     const promoted = syncActiveLineSession(trial, d4d5c4c6);
     expect(promoted.mainLineId).toBe("trial-1");
     expect(promoted.lines).toHaveLength(1);
-    expect(exportSessionForWorkspace(promoted).history.map((move) => move.uci)).toEqual([
-      "d2d4",
-      "d7d5",
-      "c2c4",
-      "c7c6",
-    ]);
+    expect(
+      exportSessionForWorkspace(promoted).history.map((move) => move.uci),
+    ).toEqual(["d2d4", "d7d5", "c2c4", "c7c6"]);
   });
 
   it("auto-promotes a terminal trial immediately even when it is not two plies beyond main", () => {
@@ -212,11 +294,8 @@ describe("line transitions", () => {
     const promoted = syncActiveLineSession(workspace, mate);
     expect(promoted.mainLineId).toBe("trial-1");
     expect(promoted.lines).toHaveLength(1);
-    expect(exportSessionForWorkspace(promoted).history.map((move) => move.uci)).toEqual([
-      "f2f3",
-      "e7e5",
-      "g2g4",
-      "d8h4",
-    ]);
+    expect(
+      exportSessionForWorkspace(promoted).history.map((move) => move.uci),
+    ).toEqual(["f2f3", "e7e5", "g2g4", "d8h4"]);
   });
 });

@@ -135,3 +135,13 @@ para la posición que el usuario todavía debe resolver.
 - No reprendas una jugada por una diferencia inferior al ruido del análisis.
 - No llames error a perder centipeones si el resultado esperado apenas cambia.
 - No felicites una jugada ilegal, imposible en la posición o atribuida a otra FEN.
+
+## Identidad y estados del feedback
+
+Cada feedback queda anclado a una media jugada concreta: línea, índice, actor, UCI y
+FEN de entrada/salida. Si la línea cambia mientras llega un resultado, ese resultado
+se descarta y la sesión no puede quedarse en `pending`.
+
+La experiencia visible distingue entre estado lento, resultado listo, error
+recuperable y análisis no disponible. El detalle completo sigue accesible aunque la
+tarjeta compacta sea la vista principal en móvil.

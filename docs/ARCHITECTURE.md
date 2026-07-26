@@ -181,3 +181,20 @@ hash, licencia, avisos y mecanismo para ofrecer el cÃ³digo fuente correspondie
 Maia-3 se instala desde un commit fijado del repositorio oficial en un entorno local
 ignorado por Git; no se redistribuye su cÃ³digo ni su checkpoint con esta aplicaciÃ³n.
 La procedencia, hash y restricciÃ³n de redistribuciÃ³n estÃ¡n en `docs/THIRD_PARTY.md`.
+
+## Ajustes recientes
+
+La identidad del feedback se fija por media jugada: línea, índice, actor, UCI y FEN
+antes/después. Un resultado tardío solo se aplica si esa misma jugada sigue vigente;
+si la línea cambia, el resultado se descarta y la solicitud termina como `ready` o
+`unavailable`, nunca como `pending` persistente.
+
+En navegador hosted o estático, y en móvil, análisis y oponente comparten un único
+broker Stockfish. Ese broker serializa trabajos, da prioridad a la jugada del rival
+frente al análisis en cola y evita dos Workers compitiendo por CPU y memoria.
+
+La composición de la UI se decide por ancho de pantalla: en <=720 px la experiencia
+usa una vista fija con tablero, resumen, navegación y acciones compactas; en
+orientación horizontal se reorganiza en dos columnas. El shell móvil bloquea el
+scroll del documento en uso normal y deja un fallback accesible para alturas
+extremas, zoom o texto grande.

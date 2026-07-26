@@ -1,4 +1,4 @@
-import type { GameSession } from "@chess-coach/chess-core";
+import { replayHistory, type GameSession } from "@chess-coach/chess-core";
 import {
   activeSessionLine,
   createTrialLine,
@@ -14,22 +14,46 @@ import { replaceNavigationLine } from "./navigationTimeline";
 
 export interface AnalysisRequestIdentity {
   readonly lineId: string;
-  readonly lineRevision: number;
-  readonly workspaceRevision: number;
+  readonly lineRole: "main" | "trial";
+  readonly fork?: { readonly lineId: string; readonly ply: number };
+  readonly historyIndex: number;
+  readonly ply: number;
+  readonly actor: "user" | "maia";
+  readonly uci: string;
+  readonly beforeFen: string;
+  readonly afterFen: string;
   readonly requestId: string;
 }
 
 export function createAnalysisRequestIdentity(
   workspace: SessionWorkspace,
   requestId: string,
+  actor: "user" | "maia" = "user",
 ): AnalysisRequestIdentity {
   const line = activeSessionLine(workspace);
+  const entry = replayHistory(line.timeline.session).at(-1);
+  if (!entry)
+    throw new Error("Cannot create an analysis identity without a move");
   return {
     lineId: line.id,
-    lineRevision: line.revision,
-    workspaceRevision: workspace.revision,
+    lineRole: line.id === workspace.mainLineId ? "main" : "trial",
+    ...(line.fork === undefined ? {} : { fork: line.fork }),
+    historyIndex: entry.historyIndex,
+    ply: entry.historyIndex + 1,
+    actor,
+    uci: entry.move.uci,
+    beforeFen: entry.beforeFen,
+    afterFen: entry.afterFen,
     requestId,
   };
+}
+
+function sameFork(
+  left: SessionLine["fork"],
+  right: AnalysisRequestIdentity["fork"],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.lineId === right.lineId && left.ply === right.ply;
 }
 
 export function acceptsAnalysisResult(
@@ -38,13 +62,17 @@ export function acceptsAnalysisResult(
   requestId: string,
 ): boolean {
   const line = activeSessionLine(workspace);
+  const entry = replayHistory(line.timeline.session)[identity.historyIndex];
   return (
     line.id === identity.lineId &&
+    (line.id === workspace.mainLineId ? "main" : "trial") ===
+      identity.lineRole &&
+    sameFork(line.fork, identity.fork) &&
     identity.requestId === requestId &&
-    line.revision >= identity.lineRevision &&
-    line.revision <= identity.lineRevision + 1 &&
-    workspace.revision >= identity.workspaceRevision &&
-    workspace.revision <= identity.workspaceRevision + 1
+    entry?.move.uci === identity.uci &&
+    entry.beforeFen === identity.beforeFen &&
+    entry.afterFen === identity.afterFen &&
+    identity.ply === identity.historyIndex + 1
   );
 }
 
@@ -64,14 +92,18 @@ function mergeAnnotations(
   source: SessionLine["annotations"],
 ): SessionLine["annotations"] {
   const merged = new Map<string, SessionLine["annotations"][number]>(
-    target.map((entry) => [`${entry.historyIndex}:${entry.uci}`, entry] as const),
+    target.map(
+      (entry) => [`${entry.historyIndex}:${entry.uci}`, entry] as const,
+    ),
   );
   for (const entry of source) {
     const key = `${entry.historyIndex}:${entry.uci}`;
     if (!merged.has(key)) merged.set(key, entry);
   }
-  return [...merged.values()].sort((left, right) =>
-    left.historyIndex - right.historyIndex || left.uci.localeCompare(right.uci),
+  return [...merged.values()].sort(
+    (left, right) =>
+      left.historyIndex - right.historyIndex ||
+      left.uci.localeCompare(right.uci),
   );
 }
 
@@ -91,10 +123,13 @@ function mergeFeedback(
   source: SessionLine["feedbackByPly"],
 ): SessionLine["feedbackByPly"] {
   const merged = new Map<string, SessionLine["feedbackByPly"][number]>(
-    target.map((entry) => [
-      `${entry.historyIndex}:${entry.uci}:${entry.actor}:${entry.beforeFen}:${entry.afterFen}`,
-      entry,
-    ] as const),
+    target.map(
+      (entry) =>
+        [
+          `${entry.historyIndex}:${entry.uci}:${entry.actor}:${entry.beforeFen}:${entry.afterFen}`,
+          entry,
+        ] as const,
+    ),
   );
   for (const entry of source) {
     const key = `${entry.historyIndex}:${entry.uci}:${entry.actor}:${entry.beforeFen}:${entry.afterFen}`;
@@ -102,8 +137,10 @@ function mergeFeedback(
     if (!current || feedbackRank(entry.status) > feedbackRank(current.status))
       merged.set(key, entry);
   }
-  return [...merged.values()].sort((left, right) =>
-    left.historyIndex - right.historyIndex || left.uci.localeCompare(right.uci),
+  return [...merged.values()].sort(
+    (left, right) =>
+      left.historyIndex - right.historyIndex ||
+      left.uci.localeCompare(right.uci),
   );
 }
 
@@ -137,7 +174,10 @@ export function historicalContinuationCandidate(
   );
 }
 
-function shouldAutoPromote(line: SessionLine, workspace: SessionWorkspace): boolean {
+function shouldAutoPromote(
+  line: SessionLine,
+  workspace: SessionWorkspace,
+): boolean {
   if (line.id === workspace.mainLineId || !line.fork) return false;
   if (line.timeline.session.isGameOver) return true;
   const main = workspace.lines.find((item) => item.id === workspace.mainLineId);

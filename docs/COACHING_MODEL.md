@@ -116,9 +116,13 @@ estabilizarse o corregirse, pero nunca modifica la evidencia, explicación o
 clasificación persistida.
 
 Las familias de plantillas pueden variar la entrada y la cadencia, nunca el hecho
-afirmado. La selección es reproducible para una misma línea de partida y evita repetir
-las familias usadas recientemente. Si falta evidencia suficiente, el renderizador usa
-una explicación neutral y honesta.
+afirmado. El renderizador dispone de un catálogo acotado de variantes
+semánticamente equivalentes y selecciona una de forma estable a partir de la
+identidad de la media jugada y del tipo de explicación; no usa aleatoriedad, ni
+estado mutable, ni memoria de visitas recientes. La misma identidad reproduce la
+misma familia y los mismos hechos, aunque `summary` y `detail` deban expresarse con
+frases distintas. Si falta evidencia suficiente, el renderizador usa una explicación
+neutral y honesta.
 
 ## Pistas progresivas
 

@@ -869,7 +869,8 @@ function bestMovePurposes(
   if (assessment.context.mateLost) purposes.push("avoids-mate");
   if (isCastlingMove(move)) purposes.push("castles");
   if (isMinorPieceDevelopment(beforeFen, move)) purposes.push("develops-piece");
-  if (move.san.includes("+") || move.san.includes("#")) purposes.push("creates-check");
+  if (move.san.includes("+") || move.san.includes("#"))
+    purposes.push("creates-check");
   const rights = getCastlingRights(beforeFen)[piece?.color ?? "white"];
   if (
     (piece?.type === "n" || piece?.type === "b") &&
@@ -890,11 +891,7 @@ function contextualExplanation(
   beforeLines: readonly EngineLine[],
 ): ContextualExplanation {
   const bestMove = bestVariation[0];
-  const purposes = bestMovePurposes(
-    before.fen,
-    assessment,
-    bestMove,
-  );
+  const purposes = bestMovePurposes(before.fen, assessment, bestMove);
   const supportingVariation = Object.freeze(bestVariation.slice(0, 3));
   if (assessment.context.equivalent || linesAreEquivalent(beforeLines)) {
     return Object.freeze({
@@ -902,9 +899,7 @@ function contextualExplanation(
       primaryReason: Object.freeze({
         kind: "unidentified",
         confidence: "medium",
-        factRefs: Object.freeze([
-          { kind: "multipv-equivalent" } as const,
-        ]),
+        factRefs: Object.freeze([{ kind: "multipv-equivalent" } as const]),
       }),
       bestMovePurposes: purposes,
       supportingVariation,
@@ -920,7 +915,8 @@ function contextualExplanation(
     : undefined;
   const responseIsCapture =
     response?.san.includes("x") === true ||
-    (responseTargetPiece !== undefined && responseTargetPiece.color !== after.turn);
+    (responseTargetPiece !== undefined &&
+      responseTargetPiece.color !== after.turn);
   const responseCapturesMovedPiece =
     responseIsCapture && responseTarget === played.to;
   // A validated PV capture plus the named score drop is sufficient evidence;
@@ -943,7 +939,11 @@ function contextualExplanation(
   ): ContextualExplanation =>
     Object.freeze({
       mode: "explained",
-      primaryReason: Object.freeze({ kind, confidence, factRefs: Object.freeze([...factRefs]) }),
+      primaryReason: Object.freeze({
+        kind,
+        confidence,
+        factRefs: Object.freeze([...factRefs]),
+      }),
       consequence: Object.freeze(consequence),
       bestMovePurposes: purposes,
       supportingVariation,
@@ -953,7 +953,10 @@ function contextualExplanation(
     return reason(
       "allowed-mate",
       "high",
-      [{ kind: "engine-mate", line: "before" }, { kind: "engine-mate", line: "after" }],
+      [
+        { kind: "engine-mate", line: "before" },
+        { kind: "engine-mate", line: "after" },
+      ],
       { kind: "mate", factRefs: [{ kind: "engine-mate", line: "after" }] },
     );
   }
@@ -961,7 +964,10 @@ function contextualExplanation(
     return reason(
       "left-piece-undefended",
       "high",
-      [{ kind: "piece", square: played.to }, { kind: "variation-move", ply: 0 }],
+      [
+        { kind: "piece", square: played.to },
+        { kind: "variation-move", ply: 0 },
+      ],
       { kind: "material-loss", factRefs: [{ kind: "variation-move", ply: 0 }] },
     );
   }
@@ -969,7 +975,10 @@ function contextualExplanation(
     return reason(
       "direct-material-loss",
       "high",
-      [{ kind: "piece", square: responseTarget! }, { kind: "variation-move", ply: 0 }],
+      [
+        { kind: "piece", square: responseTarget! },
+        { kind: "variation-move", ply: 0 },
+      ],
       { kind: "material-loss", factRefs: [{ kind: "variation-move", ply: 0 }] },
     );
   }
@@ -993,7 +1002,10 @@ function contextualExplanation(
       "allowed-forcing-attack",
       "medium",
       [{ kind: "variation-move", ply: 0 }],
-      { kind: "forcing-attack", factRefs: [{ kind: "variation-move", ply: 0 }] },
+      {
+        kind: "forcing-attack",
+        factRefs: [{ kind: "variation-move", ply: 0 }],
+      },
     );
   }
   if (
@@ -1005,14 +1017,19 @@ function contextualExplanation(
       "lost-castling-right",
       "high",
       [{ kind: "castling-right", color: before.turn }],
-      { kind: "initiative", factRefs: [{ kind: "castling-right", color: before.turn }] },
+      {
+        kind: "initiative",
+        factRefs: [{ kind: "castling-right", color: before.turn }],
+      },
     );
   }
   const stillUndeveloped = listPieces(after.fen).some(
     (piece) =>
       piece.color === before.turn &&
       (piece.type === "n" || piece.type === "b") &&
-      (piece.color === "white" ? piece.square[1] === "1" : piece.square[1] === "8"),
+      (piece.color === "white"
+        ? piece.square[1] === "1"
+        : piece.square[1] === "8"),
   );
   if (
     isNegativeAssessment(assessment) &&
@@ -1025,7 +1042,10 @@ function contextualExplanation(
       "slow-development",
       "medium",
       [{ kind: "development", square: played.to }],
-      { kind: "initiative", factRefs: [{ kind: "development", square: played.to }] },
+      {
+        kind: "initiative",
+        factRefs: [{ kind: "development", square: played.to }],
+      },
     );
   }
   return Object.freeze({
@@ -1119,68 +1139,369 @@ function formatVariationPhrases(
 
 function reasonSentence(reason: ContextualReasonKind): string {
   switch (reason) {
-    case "allowed-mate": return "Esta jugada permite una amenaza de mate.";
-    case "direct-material-loss": return "Esta jugada permite perder material de inmediato.";
-    case "left-piece-undefended": return "Esta jugada deja una pieza sin suficiente defensa.";
-    case "ignored-threat": return "Esta jugada no responde a una amenaza inmediata.";
-    case "allowed-forcing-attack": return "Esta jugada facilita un ataque con jaque.";
-    case "lost-castling-right": return "Esta jugada pierde un derecho de enroque.";
-    case "slow-development": return "Esta jugada es lenta para el desarrollo.";
-    case "unidentified": return "La alternativa recomendada ofrece una mejora comprobada.";
+    case "allowed-mate":
+      return "Esta jugada permite una amenaza de mate.";
+    case "direct-material-loss":
+      return "Esta jugada permite perder material de inmediato.";
+    case "left-piece-undefended":
+      return "Esta jugada deja una pieza sin suficiente defensa.";
+    case "ignored-threat":
+      return "Esta jugada no responde a una amenaza inmediata.";
+    case "allowed-forcing-attack":
+      return "Esta jugada facilita un ataque con jaque.";
+    case "lost-castling-right":
+      return "Esta jugada pierde un derecho de enroque.";
+    case "slow-development":
+      return "Esta jugada es lenta para el desarrollo.";
+    case "unidentified":
+      return "La alternativa recomendada ofrece una mejora comprobada.";
   }
 }
 
-function consequenceSentence(consequence: ContextualConsequence | undefined): string {
+function consequenceSentence(
+  consequence: ContextualConsequence | undefined,
+): string {
   switch (consequence?.kind) {
-    case "mate": return "El rival puede continuar con una secuencia forzada contra tu rey.";
-    case "material-loss": return "El rival puede aprovecharlo para ganar material.";
-    case "forcing-attack": return "El rival gana tiempo con una respuesta forzada.";
-    case "initiative": return "El rival puede completar su desarrollo con más comodidad.";
-    default: return "";
+    case "mate":
+      return "El rival puede continuar con una secuencia forzada contra tu rey.";
+    case "material-loss":
+      return "El rival puede aprovecharlo para ganar material.";
+    case "forcing-attack":
+      return "El rival gana tiempo con una respuesta forzada.";
+    case "initiative":
+      return "El rival puede completar su desarrollo con más comodidad.";
+    default:
+      return "";
   }
 }
 
 function purposeSentence(purposes: readonly BestMovePurpose[]): string {
   const labels: Readonly<Record<BestMovePurpose, string>> = {
-    "avoids-mate": "evita la amenaza de mate", "prevents-capture": "evita una captura inmediata",
-    "defends-piece": "defiende una pieza", "develops-piece": "desarrolla una pieza",
-    castles: "pone al rey a salvo mediante el enroque", preserves: "conserva la posición",
-    "prepares-castling": "prepara el enroque", "wins-material": "gana material", "creates-check": "crea un jaque",
+    "avoids-mate": "evita la amenaza de mate",
+    "prevents-capture": "evita una captura inmediata",
+    "defends-piece": "defiende una pieza",
+    "develops-piece": "desarrolla una pieza",
+    castles: "pone al rey a salvo mediante el enroque",
+    preserves: "conserva la posición",
+    "prepares-castling": "prepara el enroque",
+    "wins-material": "gana material",
+    "creates-check": "crea un jaque",
   };
   const described = purposes.slice(0, 3).map((purpose) => labels[purpose]);
   if (described.length === 0) return "mejora la posición de forma comprobada";
   if (described.length === 1) return described[0]!;
-  return described.length === 2 ? `${described[0]} y ${described[1]}` : `${described[0]}, ${described[1]} y ${described[2]}`;
+  return described.length === 2
+    ? `${described[0]} y ${described[1]}`
+    : `${described[0]}, ${described[1]} y ${described[2]}`;
+}
+
+/** Immutable fields that identify the exact half-move being described. */
+interface PresentationIdentity {
+  readonly ply: number;
+  readonly actor: CoachActor;
+  readonly playedUci: string;
+  readonly beforeFen: string;
+  readonly afterFen: string;
+  readonly perspective: PlayerColor;
+}
+
+/**
+ * Template selection depends only on persisted half-move identity. It never
+ * reads time, random state, or UI state, so a reload preserves the wording.
+ */
+function stableTemplateIndex(
+  identity: PresentationIdentity,
+  slot: string,
+  length: number,
+  avoid?: number,
+): number {
+  if (length < 1) throw new RangeError("Template choices must not be empty");
+  const input = [
+    identity.ply,
+    identity.actor,
+    identity.playedUci,
+    identity.beforeFen,
+    identity.afterFen,
+    identity.perspective,
+    slot,
+  ].join("|");
+  let hash = 2_166_136_261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  const selected = (hash >>> 0) % length;
+  return avoid !== undefined && length > 1 && selected === avoid
+    ? (selected + 1) % length
+    : selected;
+}
+
+function templateChoice(
+  identity: PresentationIdentity,
+  slot: string,
+  choices: readonly string[],
+  avoid?: number,
+): { readonly text: string; readonly index: number } {
+  const index = stableTemplateIndex(identity, slot, choices.length, avoid);
+  return Object.freeze({ text: choices[index]!, index });
+}
+
+const REASON_ALTERNATIVES: Readonly<
+  Record<ContextualReasonKind, readonly string[]>
+> = Object.freeze({
+  "allowed-mate": Object.freeze([
+    "Tu rey queda expuesto a una secuencia de mate.",
+    "Con esta jugada dejas entrar un mate forzado.",
+  ]),
+  "direct-material-loss": Object.freeze([
+    "El rival puede capturar material tras tu jugada.",
+    "Concedes una ganancia material inmediata.",
+  ]),
+  "left-piece-undefended": Object.freeze([
+    "Tu jugada deja esa pieza expuesta a una captura.",
+    "La pieza en esa casilla no queda bien protegida.",
+  ]),
+  "ignored-threat": Object.freeze([
+    "La jugada pasa por alto una amenaza que ya estaba presente.",
+    "Dejas sin cubrir la amenaza más urgente del rival.",
+  ]),
+  "allowed-forcing-attack": Object.freeze([
+    "Tu jugada facilita una respuesta forzada con jaque.",
+    "El rival gana iniciativa al poder dar jaque.",
+  ]),
+  "lost-castling-right": Object.freeze([
+    "Tu rey pierde la opción de enrocar.",
+    "Con este movimiento renuncias al enroque.",
+  ]),
+  "slow-development": Object.freeze([
+    "En la apertura, esta jugada deja el desarrollo demasiado lento.",
+    "Te faltó una jugada que ayudara al desarrollo.",
+  ]),
+  unidentified: Object.freeze([
+    "La mejor alternativa conserva mejor tus opciones.",
+    "La alternativa sugerida mantiene una posición más cómoda.",
+  ]),
+});
+
+const CONSEQUENCE_ALTERNATIVES: Readonly<
+  Record<ContextualConsequence["kind"], readonly string[]>
+> = Object.freeze({
+  mate: Object.freeze([
+    "Después, tu rey no tiene una defensa suficiente contra el mate.",
+    "La continuación del rival lleva a mate de forma forzada.",
+  ]),
+  "material-loss": Object.freeze([
+    "Eso deja al rival una captura que gana material.",
+    "La respuesta rival obtiene material de inmediato.",
+  ]),
+  "forcing-attack": Object.freeze([
+    "Tendrás que responder al ataque del rival antes de continuar tu plan.",
+    "El jaque obliga a atender primero la iniciativa rival.",
+  ]),
+  initiative: Object.freeze([
+    "Eso da al rival una posición más fácil para continuar.",
+    "El rival obtiene tiempo para mejorar sus piezas.",
+  ]),
+});
+
+const PURPOSE_ALTERNATIVES: Readonly<
+  Record<BestMovePurpose, readonly string[]>
+> = Object.freeze({
+  "avoids-mate": Object.freeze([
+    "mantiene a tu rey fuera del mate",
+    "corta la secuencia de mate",
+  ]),
+  "prevents-capture": Object.freeze([
+    "quita al rival una captura directa",
+    "impide que el rival gane material enseguida",
+  ]),
+  "defends-piece": Object.freeze([
+    "deja una pieza bien protegida",
+    "refuerza la defensa de una pieza",
+  ]),
+  "develops-piece": Object.freeze([
+    "pone una pieza en juego",
+    "mejora la actividad de una pieza",
+  ]),
+  castles: Object.freeze([
+    "protege al rey al enrocar",
+    "mejora la seguridad del rey con el enroque",
+  ]),
+  preserves: Object.freeze([
+    "mantiene tus opciones en la posición",
+    "evita ceder terreno sin necesidad",
+  ]),
+  "prepares-castling": Object.freeze([
+    "acerca a tu rey al enroque",
+    "deja listo el camino para enrocar",
+  ]),
+  "wins-material": Object.freeze([
+    "crea una ganancia material",
+    "aprovecha una pieza que el rival deja vulnerable",
+  ]),
+  "creates-check": Object.freeze([
+    "obliga al rival a atender un jaque",
+    "gana tiempo dando jaque",
+  ]),
+});
+
+const EQUIVALENT_PREFIXES = Object.freeze([
+  "Hay varias jugadas con resultado parecido.",
+  "Aquí hay varias jugadas con resultado similar.",
+  "Hay varias jugadas; no hay una única necesaria en esta posición.",
+]);
+
+const RECOMMENDATION_ONLY_PREFIXES = Object.freeze([
+  "No hay una pérdida táctica inmediata confirmada.",
+  "No se ve una táctica inmediata que explique por sí sola la diferencia.",
+  "La diferencia no permite señalar una causa táctica concreta.",
+]);
+
+function variedReasonSentence(
+  identity: PresentationIdentity,
+  reason: ContextualReasonKind,
+  slot: string,
+  avoid?: number,
+): { readonly text: string; readonly index: number } {
+  return templateChoice(
+    identity,
+    slot,
+    [reasonSentence(reason), ...REASON_ALTERNATIVES[reason]],
+    avoid,
+  );
+}
+
+function variedConsequenceSentence(
+  identity: PresentationIdentity,
+  consequence: ContextualConsequence,
+): string {
+  return templateChoice(identity, `detail:consequence:${consequence.kind}`, [
+    consequenceSentence(consequence),
+    ...CONSEQUENCE_ALTERNATIVES[consequence.kind],
+  ]).text;
+}
+
+function variedPurposeSentence(
+  identity: PresentationIdentity,
+  purposes: readonly BestMovePurpose[],
+  slot: string,
+): string {
+  const described = purposes
+    .slice(0, 3)
+    .map(
+      (purpose, index) =>
+        templateChoice(identity, `${slot}:${purpose}:${index}`, [
+          purposeSentence([purpose]),
+          ...PURPOSE_ALTERNATIVES[purpose],
+        ]).text,
+    );
+  if (described.length === 0) {
+    return templateChoice(identity, `${slot}:generic`, [
+      "mejora la posición de forma comprobada",
+      "conserva mejores opciones de forma comprobada",
+      "evita ceder terreno sin una compensación clara",
+    ]).text;
+  }
+  if (described.length === 1) return described[0]!;
+  return described.length === 2
+    ? `${described[0]} y ${described[1]}`
+    : `${described[0]}, ${described[1]} y ${described[2]}`;
 }
 
 function makePresentation(
   before: GameSession,
+  identity: PresentationIdentity,
+  explanation: ContextualExplanation,
+): CoachPresentation {
+  return makeVariedPresentation(before, identity, explanation);
+}
+
+function makeVariedPresentation(
+  before: GameSession,
+  identity: PresentationIdentity,
   explanation: ContextualExplanation,
 ): CoachPresentation {
   const bestMove = explanation.supportingVariation[0];
-  const recommendation = bestMove
-    ? `${describeMove(before.fen, bestMove, "mover")} ${purposeSentence(explanation.bestMovePurposes)}`
-    : "conviene revisar una alternativa legal";
-  const prefix = explanation.mode === "equivalent"
-    ? "Hay varias jugadas con resultado parecido."
-    : explanation.mode === "recommendation-only"
-      ? "No hay una pérdida táctica inmediata confirmada."
-      : reasonSentence(explanation.primaryReason.kind);
-  const consequence = explanation.mode === "explained" ? consequenceSentence(explanation.consequence) : "";
-  const summary = `${prefix} Considera ${recommendation}.`;
-  const detail = [prefix, consequence, bestMove
-    ? `${describeMove(before.fen, bestMove, "mover")} era preferible porque ${purposeSentence(explanation.bestMovePurposes)}.`
-    : "Revisa las alternativas legales antes de decidir."].filter(Boolean).join(" ");
+  const summaryReason =
+    explanation.mode === "equivalent"
+      ? templateChoice(identity, "summary:equivalent", EQUIVALENT_PREFIXES)
+      : explanation.mode === "recommendation-only"
+        ? templateChoice(
+            identity,
+            "summary:recommendation-only",
+            RECOMMENDATION_ONLY_PREFIXES,
+          )
+        : variedReasonSentence(
+            identity,
+            explanation.primaryReason.kind,
+            "summary:reason",
+          );
+  const detailReason =
+    explanation.mode === "equivalent"
+      ? templateChoice(
+          identity,
+          "detail:equivalent",
+          EQUIVALENT_PREFIXES,
+          summaryReason.index,
+        )
+      : explanation.mode === "recommendation-only"
+        ? templateChoice(
+            identity,
+            "detail:recommendation-only",
+            RECOMMENDATION_ONLY_PREFIXES,
+            summaryReason.index,
+          )
+        : variedReasonSentence(
+            identity,
+            explanation.primaryReason.kind,
+            "detail:reason",
+            summaryReason.index,
+          );
+  const summaryRecommendation = bestMove
+    ? `${describeMove(before.fen, bestMove, "mover")} porque ${variedPurposeSentence(identity, explanation.bestMovePurposes, "summary:purpose")}`
+    : "revisar una alternativa legal";
+  const detailRecommendation = bestMove
+    ? `${describeMove(before.fen, bestMove, "mover")} porque ${variedPurposeSentence(identity, explanation.bestMovePurposes, "detail:purpose")}`
+    : "revisar las alternativas legales antes de decidir";
+  const summaryLead = templateChoice(identity, "summary:recommendation-lead", [
+    "Considera",
+    "En su lugar, conviene",
+    "La alternativa útil es",
+  ]).text;
+  const detailLead = templateChoice(identity, "detail:recommendation-lead", [
+    "La mejor continuación era",
+    "Una opción preferible era",
+    "La alternativa recomendada es",
+  ]).text;
+  const consequence =
+    explanation.mode === "explained"
+      ? variedConsequenceSentence(identity, explanation.consequence)
+      : "";
+  const summary = `${summaryReason.text} ${summaryLead} ${summaryRecommendation}.`;
+  const detail = [
+    detailReason.text,
+    consequence,
+    `${detailLead} ${detailRecommendation}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return Object.freeze({
     locale: "es",
     templateId: `turn-v6-${explanation.mode}-${explanation.primaryReason.kind}-${bestMove ? "recommendation" : "no-recommendation"}`,
     summary,
-    detail: detail === summary ? `${detail} Busca una respuesta que conserve tus opciones.` : detail,
+    detail:
+      detail === summary
+        ? `${detail} Busca una respuesta que conserve tus opciones.`
+        : detail,
   });
 }
 
 function makeCopy(presentation: CoachPresentation): CoachCopy {
-  return Object.freeze({ locale: presentation.locale, templateId: presentation.templateId, text: presentation.summary });
+  return Object.freeze({
+    locale: presentation.locale,
+    templateId: presentation.templateId,
+    text: presentation.summary,
+  });
 }
 
 function makeHints(
@@ -1281,7 +1602,11 @@ function isFactRef(value: unknown): value is ContextualFactRef {
     case "engine-mate":
       return value.line === "before" || value.line === "after";
     case "variation-move":
-      return typeof value.ply === "number" && Number.isInteger(value.ply) && value.ply >= 0;
+      return (
+        typeof value.ply === "number" &&
+        Number.isInteger(value.ply) &&
+        value.ply >= 0
+      );
     case "piece":
     case "development":
       return isSquare(value.square);
@@ -1296,57 +1621,108 @@ function isFactRef(value: unknown): value is ContextualFactRef {
 
 function isPrimaryReason(value: unknown): value is ContextualReason {
   const kinds: readonly ContextualReasonKind[] = [
-    "allowed-mate", "direct-material-loss", "left-piece-undefended",
-    "ignored-threat", "allowed-forcing-attack", "lost-castling-right",
-    "slow-development", "unidentified",
+    "allowed-mate",
+    "direct-material-loss",
+    "left-piece-undefended",
+    "ignored-threat",
+    "allowed-forcing-attack",
+    "lost-castling-right",
+    "slow-development",
+    "unidentified",
   ];
   return (
     isRecord(value) &&
-    typeof value.kind === "string" && kinds.includes(value.kind as ContextualReasonKind) &&
-    (value.confidence === "high" || value.confidence === "medium" || value.confidence === "low") &&
-    Array.isArray(value.factRefs) && value.factRefs.every(isFactRef)
+    typeof value.kind === "string" &&
+    kinds.includes(value.kind as ContextualReasonKind) &&
+    (value.confidence === "high" ||
+      value.confidence === "medium" ||
+      value.confidence === "low") &&
+    Array.isArray(value.factRefs) &&
+    value.factRefs.every(isFactRef)
   );
 }
 
 function isConsequence(value: unknown): value is ContextualConsequence {
   return (
     isRecord(value) &&
-    (value.kind === "mate" || value.kind === "material-loss" || value.kind === "forcing-attack" || value.kind === "initiative") &&
-    Array.isArray(value.factRefs) && value.factRefs.every(isFactRef)
+    (value.kind === "mate" ||
+      value.kind === "material-loss" ||
+      value.kind === "forcing-attack" ||
+      value.kind === "initiative") &&
+    Array.isArray(value.factRefs) &&
+    value.factRefs.every(isFactRef)
   );
 }
 
 function isBestMovePurpose(value: unknown): value is BestMovePurpose {
-  return typeof value === "string" && [
-    "avoids-mate", "prevents-capture", "defends-piece", "develops-piece",
-    "castles", "preserves", "prepares-castling", "wins-material", "creates-check",
-  ].includes(value);
+  return (
+    typeof value === "string" &&
+    [
+      "avoids-mate",
+      "prevents-capture",
+      "defends-piece",
+      "develops-piece",
+      "castles",
+      "preserves",
+      "prepares-castling",
+      "wins-material",
+      "creates-check",
+    ].includes(value)
+  );
 }
 
-function isContextualExplanationValue(value: unknown): value is ContextualExplanation {
-  if (!isRecord(value) || !isPrimaryReason(value.primaryReason) ||
-    !Array.isArray(value.bestMovePurposes) || !value.bestMovePurposes.every(isBestMovePurpose) ||
-    !Array.isArray(value.supportingVariation) || !value.supportingVariation.every(isVerifiedMoveValue)) return false;
+function isContextualExplanationValue(
+  value: unknown,
+): value is ContextualExplanation {
+  if (
+    !isRecord(value) ||
+    !isPrimaryReason(value.primaryReason) ||
+    !Array.isArray(value.bestMovePurposes) ||
+    !value.bestMovePurposes.every(isBestMovePurpose) ||
+    !Array.isArray(value.supportingVariation) ||
+    !value.supportingVariation.every(isVerifiedMoveValue)
+  )
+    return false;
   const reason = value.primaryReason;
   if (value.mode === "explained") {
-    return reason.kind !== "unidentified" && hasField(value, "consequence") && isConsequence(value.consequence);
+    return (
+      reason.kind !== "unidentified" &&
+      hasField(value, "consequence") &&
+      isConsequence(value.consequence)
+    );
   }
   if (value.mode === "recommendation-only") {
-    return !hasField(value, "consequence") && reason.kind === "unidentified" &&
-      reason.confidence === "low" && reason.factRefs.length === 0;
+    return (
+      !hasField(value, "consequence") &&
+      reason.kind === "unidentified" &&
+      reason.confidence === "low" &&
+      reason.factRefs.length === 0
+    );
   }
-  return value.mode === "equivalent" && !hasField(value, "consequence") &&
-    reason.kind === "unidentified" && reason.confidence === "medium" &&
-    reason.factRefs.length === 1 && reason.factRefs[0]?.kind === "multipv-equivalent";
+  return (
+    value.mode === "equivalent" &&
+    !hasField(value, "consequence") &&
+    reason.kind === "unidentified" &&
+    reason.confidence === "medium" &&
+    reason.factRefs.length === 1 &&
+    reason.factRefs[0]?.kind === "multipv-equivalent"
+  );
 }
 
 function isPresentation(value: unknown): value is CoachPresentation {
-  return isRecord(value) && value.locale === "es" && typeof value.templateId === "string" &&
-    typeof value.summary === "string" && typeof value.detail === "string" &&
-    value.summary !== value.detail;
+  return (
+    isRecord(value) &&
+    value.locale === "es" &&
+    typeof value.templateId === "string" &&
+    typeof value.summary === "string" &&
+    typeof value.detail === "string" &&
+    value.summary !== value.detail
+  );
 }
 
-export function decodeCoachTurnRecord(value: unknown): CoachTurnRecord | undefined {
+export function decodeCoachTurnRecord(
+  value: unknown,
+): CoachTurnRecord | undefined {
   if (!isRecord(value)) return undefined;
   const candidate = value;
   if (
@@ -1355,14 +1731,23 @@ export function decodeCoachTurnRecord(value: unknown): CoachTurnRecord | undefin
     !isRecord(candidate.evidence) ||
     !isRecord(candidate.motif) ||
     !Array.isArray(candidate.hints)
-  ) return undefined;
+  )
+    return undefined;
   if (candidate.schemaVersion === 2) {
-    if (hasField(candidate, "explanation") || hasField(candidate, "presentation")) return undefined;
+    if (
+      hasField(candidate, "explanation") ||
+      hasField(candidate, "presentation")
+    )
+      return undefined;
   } else if (candidate.explanation === undefined) {
     if (candidate.presentation !== undefined) return undefined;
   } else {
     const explanation = candidate.explanation;
-    if (!isContextualExplanationValue(explanation) || !isPresentation(candidate.presentation)) return undefined;
+    if (
+      !isContextualExplanationValue(explanation) ||
+      !isPresentation(candidate.presentation)
+    )
+      return undefined;
     if (typeof candidate.turn.beforeFen !== "string") return undefined;
     const legalVariation = verifiedVariation(
       candidate.turn.beforeFen,
@@ -1376,7 +1761,8 @@ export function decodeCoachTurnRecord(value: unknown): CoachTurnRecord | undefin
           move.uci !== explanation.supportingVariation[index]?.uci ||
           move.san !== explanation.supportingVariation[index]?.san,
       )
-    ) return undefined;
+    )
+      return undefined;
   }
   return normalizeCoachTurnRecord(candidate as unknown as CoachTurnRecord);
 }
@@ -1430,7 +1816,20 @@ export function analyzeTurn(
           beforeLines,
         );
   const presentation =
-    explanation === undefined ? undefined : makePresentation(before, explanation);
+    explanation === undefined
+      ? undefined
+      : makePresentation(
+          before,
+          Object.freeze({
+            ply: after.history.length,
+            actor,
+            playedUci: played.uci,
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            perspective,
+          }),
+          explanation,
+        );
   const copy = presentation === undefined ? undefined : makeCopy(presentation);
   const hints =
     assessment === undefined

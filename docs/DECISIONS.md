@@ -291,7 +291,9 @@ ampliado, pero ambos derivan del mismo registro.
 La confianza interna permanece fuera de la UI. `high` y `medium` pueden justificar
 una causa visible; `low` se degrada a `recommendation-only` y muestra solo la mejor
 continuación defendible. La PV se usa como evidencia, no como texto de interfaz, y el
-MVP mantiene su restricción de no introducir LLM como fuente de verdad.
+MVP mantiene su restricción de no introducir LLM como fuente de verdad. La
+presentación puede alternar entre familias equivalentes, pero la selección sigue
+siendo determinista para una misma identidad de media jugada.
 
 `CoachTurnRecord` v3 convive con lectura de v2 y `StoredGame` sigue en v6. No se
 añaden detectores avanzados fuera del alcance actual —como forks, pins o estructura

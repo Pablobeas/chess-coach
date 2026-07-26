@@ -73,7 +73,10 @@ deben repetir de forma mecánica la misma familia de plantilla.
 
 Las evaluaciones semánticas del feedback v3 verifican además que la vista compacta y
 la ampliada no son idénticas, que la confianza interna baja no inventa una causa y
-que el texto no expone PV, centipeones ni términos internos.
+que el texto no expone PV, centipeones ni términos internos. También comprueban que
+las variantes semánticamente equivalentes se seleccionan de forma determinista por
+identidad, que la misma media jugada conserva la misma familia al recargar y que la
+selección no depende de memoria reciente ni aleatoriedad.
 
 ## Presupuestos iniciales
 

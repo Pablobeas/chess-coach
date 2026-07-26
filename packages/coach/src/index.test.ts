@@ -178,7 +178,9 @@ describe("coach turn records", () => {
     );
     expect(record.motif.kind).toBeDefined();
     expect(record.presentation?.summary).not.toBe(record.presentation?.detail);
-    expect(record.presentation?.detail.split(/[.!?](?:\s|$)/).filter(Boolean).length).toBeGreaterThanOrEqual(2);
+    expect(
+      record.presentation?.detail.split(/[.!?](?:\s|$)/).filter(Boolean).length,
+    ).toBeGreaterThanOrEqual(2);
     expect(record.hints.map((hint) => hint.level)).toEqual([1, 2, 3]);
     expect(record.hints[1]?.text).toBe("Revisa el peón e2-e4.");
     expect(record.hints[2]?.text).toBe("Prueba el peón e2-e4.");
@@ -299,7 +301,9 @@ describe("coach turn records", () => {
 
     expect(record.motif.kind).toBe("hanging-piece");
     expect(record.motif.facts?.[0]?.detail).toContain("f4");
-    expect(record.explanation?.primaryReason.kind).toBe("left-piece-undefended");
+    expect(record.explanation?.primaryReason.kind).toBe(
+      "left-piece-undefended",
+    );
     expect(record.copy?.text).not.toMatch(/PV|centipawn|confidence/i);
   });
 
@@ -349,8 +353,12 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -100 }, ["e8d7"]),
     );
 
-    expect(favorable.explanation?.primaryReason.kind).not.toBe("lost-castling-right");
-    expect(castle.explanation?.primaryReason.kind).not.toBe("lost-castling-right");
+    expect(favorable.explanation?.primaryReason.kind).not.toBe(
+      "lost-castling-right",
+    );
+    expect(castle.explanation?.primaryReason.kind).not.toBe(
+      "lost-castling-right",
+    );
   });
 
   it("keeps visible feedback compact while naming the verified alternative", () => {
@@ -392,7 +400,9 @@ describe("coach turn records", () => {
 
       expect(record.assessment?.label).toBe(label);
       expect(record.copy?.text).not.toMatch(/PV|centipawn|confidence/i);
-      expect(record.presentation?.summary).not.toBe(record.presentation?.detail);
+      expect(record.presentation?.summary).not.toBe(
+        record.presentation?.detail,
+      );
     });
   });
 
@@ -504,8 +514,73 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -80 }, ["e7e5"]),
     );
     expect(e4Record.copy).toEqual(repeat.copy);
-    expect(e4Record.copy?.templateId).toBe("turn-v6-explained-slow-development-recommendation");
-    expect(e4Record.presentation?.summary).not.toBe(e4Record.presentation?.detail);
+    expect(e4Record.copy?.templateId).toBe(
+      "turn-v6-explained-slow-development-recommendation",
+    );
+    expect(e4Record.presentation?.summary).not.toBe(
+      e4Record.presentation?.detail,
+    );
+  });
+
+  it("varies contextual wording deterministically without changing the chess facts", () => {
+    const before = createInitialGame();
+    const records = (["a2a3", "b2b3", "c2c3", "g2g3", "h2h3"] as const).map(
+      (uci) => {
+        const after = applyMove(before, {
+          from: uci.slice(0, 2),
+          to: uci.slice(2, 4),
+        });
+        return analyzeTurn(
+          before,
+          after,
+          line({ kind: "centipawns", value: 120 }, ["e2e4"]),
+          line({ kind: "centipawns", value: -100 }, ["e7e5"]),
+        );
+      },
+    );
+    const repeated = analyzeTurn(
+      before,
+      applyMove(before, { from: "a2", to: "a3" }),
+      line({ kind: "centipawns", value: 120 }, ["e2e4"]),
+      line({ kind: "centipawns", value: -100 }, ["e7e5"]),
+    );
+    const renderedSummaries = records.map(
+      (record) => record.presentation?.summary,
+    );
+    const forbiddenTerms =
+      /\b(?:PV|centipawn(?:s)?|confidence|profundidad|multipv)\b/i;
+
+    expect(new Set(renderedSummaries).size).toBeGreaterThanOrEqual(3);
+    expect(records[0]?.presentation).toEqual(repeated.presentation);
+    records.forEach((record) => {
+      expect(record.assessment?.label).toBe("mistake");
+      expect(record.motif.kind).toBe("neutral");
+      expect(record.explanation?.primaryReason.kind).toBe("slow-development");
+      expect(record.presentation?.summary).toMatch(/desarrollo/);
+      expect(record.presentation?.detail).toContain("peón e2-e4");
+      expect(record.presentation?.summary).not.toMatch(forbiddenTerms);
+      expect(record.presentation?.detail).not.toMatch(forbiddenTerms);
+      expect(record.presentation?.summary).not.toBe(
+        record.presentation?.detail,
+      );
+    });
+  });
+
+  it("keeps varied presentation byte-stable through persistence", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "a2", to: "a3" });
+    const record = analyzeTurn(
+      before,
+      after,
+      line({ kind: "centipawns", value: 120 }, ["e2e4"]),
+      line({ kind: "centipawns", value: -100 }, ["e7e5"]),
+    );
+    const snapshot = JSON.stringify(record);
+    const restored = decodeCoachTurnRecord(JSON.parse(snapshot));
+
+    expect(JSON.stringify(restored)).toBe(snapshot);
+    expect(restored?.presentation).toEqual(record.presentation);
+    expect(restored?.copy).toEqual(record.copy);
   });
 
   it("keeps mate and already-lost copy honest about the engine evidence", () => {
@@ -529,7 +604,9 @@ describe("coach turn records", () => {
     expect(alreadyLost.explanation?.mode).toBe("recommendation-only");
     expect(alreadyLost.copy?.text).not.toMatch(/evaluación|estimación/i);
     [mate, alreadyLost].forEach((record) =>
-      expect(record.presentation?.summary).not.toBe(record.presentation?.detail),
+      expect(record.presentation?.summary).not.toBe(
+        record.presentation?.detail,
+      ),
     );
   });
 
@@ -581,7 +658,10 @@ describe("coach turn records", () => {
     const valid = structuredClone(record) as unknown as Record<string, unknown>;
     const noConsequence = structuredClone(valid) as Record<string, unknown>;
     delete (noConsequence.explanation as Record<string, unknown>).consequence;
-    const recommendationWithConsequence = structuredClone(valid) as Record<string, unknown>;
+    const recommendationWithConsequence = structuredClone(valid) as Record<
+      string,
+      unknown
+    >;
     recommendationWithConsequence.explanation = {
       mode: "recommendation-only",
       primaryReason: { kind: "unidentified", confidence: "low", factRefs: [] },
@@ -591,7 +671,9 @@ describe("coach turn records", () => {
     };
     const malformedFact = structuredClone(valid) as Record<string, unknown>;
     (malformedFact.explanation as Record<string, unknown>).primaryReason = {
-      kind: "allowed-mate", confidence: "high", factRefs: [{ kind: "piece", square: "z9" }],
+      kind: "allowed-mate",
+      confidence: "high",
+      factRefs: [{ kind: "piece", square: "z9" }],
     };
     const tamperedSan = structuredClone(valid) as Record<string, unknown>;
     (tamperedSan.explanation as Record<string, unknown>).supportingVariation = [
@@ -600,7 +682,9 @@ describe("coach turn records", () => {
 
     expect(decodeCoachTurnRecord(valid)).toBeDefined();
     expect(decodeCoachTurnRecord(noConsequence)).toBeUndefined();
-    expect(decodeCoachTurnRecord(recommendationWithConsequence)).toBeUndefined();
+    expect(
+      decodeCoachTurnRecord(recommendationWithConsequence),
+    ).toBeUndefined();
     expect(decodeCoachTurnRecord(malformedFact)).toBeUndefined();
     expect(decodeCoachTurnRecord(tamperedSan)).toBeUndefined();
   });

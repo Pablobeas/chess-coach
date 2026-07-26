@@ -48,6 +48,91 @@ async function moveButton(page: Page, san: string) {
 test.describe("mobile fixed game and coach feedback", () => {
   test.describe.configure({ mode: "serial" });
 
+  test("new game remains naturally scrollable when mobile browser chrome changes", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => localStorage.clear());
+    await page.goto("/");
+    const configuredViewport = test.info().project.use.viewport as
+      { width?: number } | undefined;
+    if (configuredViewport?.width === 390) {
+      await page.setViewportSize({ width: 390, height: 710 });
+    }
+    await page.evaluate(() =>
+      window.visualViewport?.dispatchEvent(new Event("resize")),
+    );
+    const expectedViewportHeight = await page.evaluate(() =>
+      Math.round(window.visualViewport?.height ?? window.innerHeight),
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.documentElement.style.getPropertyValue(
+            "--app-viewport-height",
+          ),
+        ),
+      )
+      .toBe(`${expectedViewportHeight}px`);
+
+    const startButton = page.getByRole("button", { name: "Comenzar partida" });
+    const metrics = await page.evaluate(() => ({
+      scrollHeight: document.documentElement.scrollHeight,
+      viewportHeight: window.visualViewport?.height ?? window.innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      optionHeights: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".setup-form label:has(input)",
+        ),
+      ].map((element) => element.getBoundingClientRect().height),
+    }));
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.viewportHeight);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
+    expect(metrics.optionHeights.every((height) => height >= 44)).toBe(true);
+
+    await startButton.scrollIntoViewIfNeeded();
+    await expect(startButton).toBeVisible();
+    const buttonBounds = await startButton.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        viewportHeight: window.visualViewport?.height ?? window.innerHeight,
+      };
+    });
+    expect(buttonBounds.top).toBeGreaterThanOrEqual(0);
+    expect(buttonBounds.bottom).toBeLessThanOrEqual(
+      buttonBounds.viewportHeight,
+    );
+
+    await page.getByLabel("Blancas").focus();
+    const focusBounds = await page.getByLabel("Blancas").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        outline: getComputedStyle(element).outlineStyle,
+      };
+    });
+    expect(focusBounds.outline).toBe("solid");
+    expect(focusBounds.top).toBeGreaterThanOrEqual(0);
+    expect(focusBounds.bottom).toBeLessThanOrEqual(buttonBounds.viewportHeight);
+
+    if (configuredViewport?.width === 320) {
+      // A 160px CSS viewport is the reflow width a 320px phone exposes at 200% zoom.
+      await page.setViewportSize({ width: 160, height: 568 });
+      const zoomMetrics = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      }));
+      expect(zoomMetrics.scrollWidth).toBeLessThanOrEqual(
+        zoomMetrics.innerWidth + 1,
+      );
+      await startButton.scrollIntoViewIfNeeded();
+      await expect(startButton).toBeVisible();
+    }
+  });
+
   test("rival may answer first; coach settles without a pending deadlock", async ({
     page,
   }) => {
@@ -264,7 +349,8 @@ test.describe("mobile fixed game and coach feedback", () => {
       .toBe("710px");
 
     const metrics = await page.evaluate(() => {
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const viewportHeight =
+        window.visualViewport?.height ?? window.innerHeight;
       const required = [
         ".game-header",
         ".mobile-evaluation",
@@ -291,7 +377,9 @@ test.describe("mobile fixed game and coach feedback", () => {
       };
     });
 
-    expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+    expect(metrics.scrollHeight).toBeLessThanOrEqual(
+      metrics.viewportHeight + 1,
+    );
     for (const control of metrics.required) {
       expect(control.visible, control.selector).toBe(true);
       expect(control.top, control.selector).toBeGreaterThanOrEqual(0);
@@ -305,8 +393,7 @@ test.describe("mobile fixed game and coach feedback", () => {
     page,
   }) => {
     const viewport = test.info().project.use.viewport as
-      | { width?: number; height?: number }
-      | undefined;
+      { width?: number; height?: number } | undefined;
     test.skip(
       !viewport?.height || viewport.height > 620,
       "This regression covers the documented short-height fallback",

@@ -33,7 +33,7 @@ export function GameSetup({
   };
 
   return (
-    <main className="shell">
+    <main className="shell shell-setup">
       <section className="setup" aria-labelledby="setup-title">
         <header className="setup-header">
           <p className="eyebrow">Chess Coach · Offline</p>

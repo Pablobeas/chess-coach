@@ -25,7 +25,6 @@
   box-sizing: border-box;
 }
 body {
-  min-width: 320px;
   min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
@@ -182,7 +181,7 @@ button {
   display: flex;
   gap: 10px;
   align-items: center;
-  min-height: 40px;
+  min-height: 44px;
   color: var(--color-text);
 }
 .setup-option-group-color,
@@ -216,7 +215,19 @@ button {
 }
 .setup-form input[type="range"] {
   width: 100%;
-  height: 24px;
+  height: 44px;
+}
+.setup-form input:focus-visible {
+  outline: 3px solid var(--color-accent-strong);
+  outline-offset: 3px;
+}
+.setup-option-group:not(.setup-option-group-opponent)
+  label:has(input:focus-visible) {
+  border-color: var(--color-accent-strong);
+  box-shadow: 0 0 0 2px rgb(200 220 141 / 32%);
+}
+.setup-form :is(input, button) {
+  scroll-margin-block: max(16px, env(safe-area-inset-bottom));
 }
 .setup-form output {
   color: var(--color-accent-strong);
@@ -1174,6 +1185,19 @@ button:focus-visible {
       max(10px, env(safe-area-inset-right))
       max(10px, env(safe-area-inset-bottom))
       max(10px, env(safe-area-inset-left));
+  }
+  /*
+   * The game is deliberately a fixed, no-scroll layout on phones, but setup
+   * is a longer form. Let the document own its vertical scrolling there so
+   * every option and the submit button remain reachable when browser chrome
+   * shortens Safari or Chrome's visual viewport. The shared viewport variable
+   * still supplies the minimum canvas height without another viewport listener.
+   */
+  .shell-setup {
+    height: auto;
+    min-height: var(--app-viewport-height);
+    overflow: visible;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
   .game-header {
     min-height: 44px;

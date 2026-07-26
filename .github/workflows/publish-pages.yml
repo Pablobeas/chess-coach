@@ -17,7 +17,6 @@ env:
   TARGET_REPO: Pablobeas/chess-coach-play
   TARGET_BRANCH: main
   PUBLISH_SOURCE: apps/web/dist-pages
-  PUBLISH_TARGET: ${{ runner.temp }}/pages-repo
 
 jobs:
   publish:
@@ -66,15 +65,19 @@ jobs:
 
       - name: Clone public Pages repository
         env:
+          PUBLISH_TARGET: ${{ runner.temp }}/pages-repo
           GIT_SSH_COMMAND: ssh -i ~/.ssh/pages_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts
         run: |
           git clone --depth 1 --branch "$TARGET_BRANCH" "git@github.com:${TARGET_REPO}.git" "$PUBLISH_TARGET"
 
       - name: Sync artifact tree
+        env:
+          PUBLISH_TARGET: ${{ runner.temp }}/pages-repo
         run: node tools/publish-pages.mjs sync "$PUBLISH_SOURCE" "$PUBLISH_TARGET"
 
       - name: Commit and push Pages updates
         env:
+          PUBLISH_TARGET: ${{ runner.temp }}/pages-repo
           GIT_SSH_COMMAND: ssh -i ~/.ssh/pages_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=~/.ssh/known_hosts
         run: |
           SOURCE_COMMIT_DATE="$(git -C "$GITHUB_WORKSPACE" log -1 --format=%cI "$GITHUB_SHA")"

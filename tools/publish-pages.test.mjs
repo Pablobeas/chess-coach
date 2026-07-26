@@ -159,6 +159,14 @@ test("publish workflow keeps the expected trigger, validation, and SSH publish f
     /node tools\/publish-pages\.mjs validate "\$PUBLISH_SOURCE"/,
   );
   assert.match(workflow, /PAGES_DEPLOY_KEY/);
+  assert.doesNotMatch(
+    workflow,
+    /env:\n  TARGET_REPO: Pablobeas\/chess-coach-play\n  TARGET_BRANCH: main\n  PUBLISH_SOURCE: apps\/web\/dist-pages\n  PUBLISH_TARGET:/,
+  );
+  assert.match(
+    workflow,
+    /- name: Clone public Pages repository[\s\S]*?env:\n\s+PUBLISH_TARGET: \$\{\{ runner\.temp \}\}\/pages-repo/,
+  );
   assert.match(
     workflow,
     /github\.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl/,

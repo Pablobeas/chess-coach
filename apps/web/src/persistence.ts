@@ -9,7 +9,7 @@ import type {
   CoachTurnRecord,
   MoveLabel,
 } from "@chess-coach/coach";
-import { normalizeCoachTurnRecord } from "@chess-coach/coach";
+import { decodeCoachTurnRecord } from "@chess-coach/coach";
 import {
   createSessionWorkspace,
   type SessionLine,
@@ -177,7 +177,9 @@ function validFeedback(
         record.status !== "ready" ||
         (record.record?.turn.playedUci === record.uci &&
           record.record.turn.ply === record.historyIndex + 1 &&
-          record.record.turn.actor === record.actor)
+          record.record.turn.actor === record.actor &&
+          record.record.turn.beforeFen === record.beforeFen &&
+          record.record.turn.afterFen === record.afterFen)
       );
     }),
   );
@@ -305,28 +307,16 @@ function normalizeVisibleFeedback(
   feedback: readonly MoveFeedbackRecord[],
 ): readonly MoveFeedbackRecord[] {
   return Object.freeze(
-    feedback.map((record) =>
-      record.status === "ready" && record.record
-        ? { ...record, record: normalizeCoachTurnRecord(record.record) }
-        : record,
-    ),
+    feedback.flatMap((record) => {
+      if (record.status !== "ready" || !record.record) return [record];
+      const decoded = decodeCoachTurnRecord(record.record);
+      return decoded ? [{ ...record, record: decoded }] : [];
+    }),
   );
 }
 
 function isCoachTurnRecord(value: unknown): value is CoachTurnRecord {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<CoachTurnRecord>;
-  return (
-    record.schemaVersion === 2 &&
-    record.turn !== undefined &&
-    (record.turn.actor === "user" || record.turn.actor === "maia") &&
-    Number.isInteger(record.turn.ply) &&
-    typeof record.turn.playedUci === "string" &&
-    typeof record.turn.beforeFen === "string" &&
-    typeof record.turn.afterFen === "string" &&
-    Array.isArray(record.hints) &&
-    record.evidence !== undefined
-  );
+  return decodeCoachTurnRecord(value) !== undefined;
 }
 
 function isCoachFeedback(value: unknown): value is CoachFeedback {
@@ -473,11 +463,14 @@ export function loadStoredGame(
               revision: 0,
             } satisfies SessionLine,
           ];
-    const workspace = migrateLegacyRecovery({
-      ...main,
-      lines: [migratedMain, ...trial],
-      activeLineId: trial.length ? "trial-1" : "main",
-    }, undefined);
+    const workspace = migrateLegacyRecovery(
+      {
+        ...main,
+        lines: [migratedMain, ...trial],
+        activeLineId: trial.length ? "trial-1" : "main",
+      },
+      undefined,
+    );
     return {
       version: 6,
       settings,
@@ -619,7 +612,13 @@ function parseWorkspace(value: unknown): SessionWorkspace | null {
       if (!line.fork) continue;
       const parent = lineMap.get(line.fork.lineId);
       if (!parent || !kept.has(parent.id)) continue;
-      if (!hasSharedPrefix(parent.timeline.session, line.timeline.session, line.fork.ply))
+      if (
+        !hasSharedPrefix(
+          parent.timeline.session,
+          line.timeline.session,
+          line.fork.ply,
+        )
+      )
         continue;
       kept.add(line.id);
       changed = true;

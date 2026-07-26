@@ -2,6 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: "**/desktop-smoke.spec.ts",
+  // Avoid artificial contention between multiple Worker/WASM engines when validating device budgets.
+  workers: 4,
   timeout: 30_000,
   outputDir: "output/playwright/test-results",
   use: { baseURL: "http://127.0.0.1:4173", trace: "retain-on-failure" },

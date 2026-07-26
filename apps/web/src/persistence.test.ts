@@ -67,6 +67,36 @@ function recordFor(
   };
 }
 
+function contextualRecordFor(
+  before: ReturnType<typeof createInitialGame>,
+  after: ReturnType<typeof createInitialGame>,
+): CoachTurnRecord {
+  const legacy = recordFor(before, after, "user");
+  const move = after.history.at(-1)!;
+  return {
+    ...legacy,
+    schemaVersion: 3,
+    explanation: {
+      mode: "explained",
+      primaryReason: {
+        kind: "slow-development",
+        confidence: "medium",
+        factRefs: [],
+      },
+      consequence: { kind: "initiative", factRefs: [] },
+      bestMovePurposes: ["develops-piece"],
+      supportingVariation: [{ uci: move.uci, san: move.san }],
+    },
+    presentation: {
+      locale: "es",
+      templateId: "persistence-v3",
+      summary: "Desarrollas una pieza y ganas espacio.",
+      detail:
+        "Desarrollas una pieza y ganas espacio, dejando más opciones para continuar.",
+    },
+  };
+}
+
 function sessionWithPlies(count: number) {
   let session = createInitialGame();
   for (let index = 0; index < count; index += 1) {
@@ -426,6 +456,142 @@ describe("local persistence", () => {
     expect(
       loadStoredGame(storage)?.feedbackByPly.map((item) => item.actor),
     ).toEqual(["user", "maia"]);
+  });
+
+  it("loads both v2 and contextual v3 records without inventing a v2 explanation", () => {
+    const storage = memoryStorage();
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    saveStoredGame(
+      after,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: 0,
+          uci: "e2e4",
+          actor: "user",
+          beforeFen: before.fen,
+          afterFen: after.fen,
+          status: "ready",
+          record: contextualRecordFor(before, after),
+        },
+      ],
+    );
+
+    const v3 = loadStoredGame(storage)?.feedbackByPly[0]?.record;
+    expect(v3).toMatchObject({
+      schemaVersion: 3,
+      presentation: { summary: "Desarrollas una pieza y ganas espacio." },
+    });
+
+    const stored = JSON.parse(
+      storage.getItem("chess-coach:active-game:v1") ?? "{}",
+    ) as {
+      workspace: {
+        lines: Array<{ feedbackByPly: Array<{ record: unknown }> }>;
+      };
+    };
+    stored.workspace.lines[0]!.feedbackByPly[0]!.record = recordFor(
+      before,
+      after,
+      "user",
+    );
+    storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
+
+    const v2 = loadStoredGame(storage)?.feedbackByPly[0]?.record;
+    expect(v2).toMatchObject({ schemaVersion: 2 });
+    expect(v2?.explanation).toBeUndefined();
+    expect(v2?.presentation).toBeUndefined();
+  });
+
+  it("drops malformed contextual records instead of retaining an unverified explanation", () => {
+    const storage = memoryStorage();
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const contextual = contextualRecordFor(before, after);
+    const malformed = {
+      ...contextual,
+      presentation: {
+        ...contextual.presentation!,
+        detail: contextual.presentation!.summary,
+      },
+    } as unknown as CoachTurnRecord;
+    saveStoredGame(
+      after,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: 0,
+          uci: "e2e4",
+          actor: "user",
+          beforeFen: before.fen,
+          afterFen: after.fen,
+          status: "ready",
+          record: malformed,
+        },
+      ],
+    );
+    expect(loadStoredGame(storage)?.feedbackByPly).toEqual([]);
+  });
+
+  it("rejects a ready record whose internal FEN does not match its persisted ply", () => {
+    const storage = memoryStorage();
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const mismatched = {
+      ...contextualRecordFor(before, after),
+      turn: {
+        ...contextualRecordFor(before, after).turn,
+        afterFen: before.fen,
+      },
+    } as CoachTurnRecord;
+    saveStoredGame(
+      after,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: 0,
+          uci: "e2e4",
+          actor: "user",
+          beforeFen: before.fen,
+          afterFen: after.fen,
+          status: "ready",
+          record: mismatched,
+        },
+      ],
+    );
+    expect(loadStoredGame(storage)?.feedbackByPly).toEqual([]);
+  });
+
+  it("keeps an unavailable record-free ply when its replay identity is valid", () => {
+    const storage = memoryStorage();
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    saveStoredGame(
+      after,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: 0,
+          uci: "e2e4",
+          actor: "user",
+          beforeFen: before.fen,
+          afterFen: after.fen,
+          status: "unavailable",
+        },
+      ],
+    );
+    expect(loadStoredGame(storage)?.feedbackByPly).toMatchObject([
+      { status: "unavailable", uci: "e2e4" },
+    ]);
   });
 
   it("keeps feedback for every ply of a 100-ply legal history", () => {

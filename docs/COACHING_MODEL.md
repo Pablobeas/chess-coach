@@ -7,8 +7,10 @@ El entrenador produce cinco artefactos distintos:
 1. Evidencia del motor: variantes, WDL, centipeones o mate.
 2. Métrica calibrada: resultado esperado antes y después.
 3. Clasificación: excelente, buena, imprecisión, error o error grave.
-4. Explicación: motivo verificable y consecuencia principal.
-5. Pista: revelación progresiva para la siguiente decisión.
+4. Explicación: motivo verificable, consecuencia principal y mejor jugada.
+5. Presentación: resumen y detalle visible, distintos pero derivados de la misma
+   explicación.
+6. Pista: revelación progresiva para la siguiente decisión.
 
 No combines estas capas en una sola cadena de texto interna.
 
@@ -19,13 +21,18 @@ El feedback se construye de forma determinista:
 1. El motor aporta evaluación, variantes y WDL.
 2. Los detectores comparan el tablero antes y después para identificar material,
    amenazas, seguridad del rey, desarrollo, actividad y motivos tácticos.
-3. Un selector prioriza un motivo principal y, cuando ayuda, uno secundario.
+3. Un selector prioriza un motivo principal; si la confianza es baja, evita inventar
+   una causa y solo ofrece la recomendación mínima.
 4. Plantillas localizadas insertan piezas, casillas, movimientos SAN y consecuencias.
 5. Un validador confirma que cada movimiento citado es legal en la FEN correspondiente.
 
 Este enfoque es reproducible, funciona offline y evita explicaciones inventadas. Un
 modelo local como Ollama no es necesario para el MVP y no debe añadirse como atajo
 para suplir detectores o datos estructurados ausentes.
+
+La confianza interna no se expone en la UI. `high` y `medium` pueden justificar una
+causa visible; `low` cae en `recommendation-only` y muestra únicamente la mejor
+jugada y la consecuencia directa que sí se puede defender.
 
 ## Resultado esperado
 
@@ -69,23 +76,18 @@ especiales que no se reducen a la pérdida esperada.
 
 ## Feedback
 
-Un mensaje útil responde, cuando sea posible, a tres preguntas: qué cambió, por qué
-y qué patrón debe buscar el jugador después. Evita afirmar intenciones que no puedan
-deducirse de la posición.
+Un mensaje útil responde, cuando sea posible, a tres preguntas: qué pasó, por qué
+importa y cuál es la mejor jugada. La versión visible debe ser corta: una línea para
+la jugada y una o dos frases para la causa y la consecuencia.
 
 La revisión posterior usa una voz cercana y serena, pero continúa siendo una
-proyección determinista de evidencia estructurada. El texto visible tiene una o dos
-frases: una etiqueta breve con un motivo verificable y la mejor
-jugada legal; cuando la jugada realizada inicia la PV validada y no tiene una
-etiqueta negativa, lo dice de forma natural y nombra esa misma jugada. Si la
-etiqueta es negativa o se perdió un mate, muestra la advertencia y describe la PV
-sin llamarla «la mejor». Si varias jugadas son equivalentes, debe decirlo en lugar
-de inventar una única solución.
+proyección determinista de evidencia estructurada. Si la confianza interna es alta o
+media, puede nombrar una causa verificable; si es baja, evita inventarla y se limita
+a recomendar la mejor continuación legal. La PV solo sirve como evidencia, no como
+texto de interfaz.
 
-El motivo visible se toma, por este orden, de un cambio de mate, del contexto de una
-posición ya perdida, de un hecho detectado en el tablero o de la relación de la
-jugada con la PV legal validada. No se completa con una explicación posicional
-genérica. Si no hay PV legal, el texto lo declara y no nombra una mejor jugada. Las
+Si varias jugadas son equivalentes, debe decirlo en lugar de inventar una única
+solución. Si no hay PV legal, el texto lo declara y no nombra una mejor jugada. Las
 calibraciones desde centipeones se marcan como «estimación» incluso en este formato
 compacto.
 
@@ -102,6 +104,10 @@ línea `info` normalizada desde profundidad 6 y mostrar un icono provisional. El
 se marca como provisional para tecnologías de asistencia, solo cambia cuando cambia
 la categoría y nunca se guarda en la partida. Antes de clasificar se reproducen por
 completo las PV anterior y posterior; una línea sintáctica pero ilegal se descarta.
+
+La vista compacta y la ampliada deben derivarse del mismo registro, pero no repetir el
+mismo texto literal: el resumen prioriza jugada, motivo y mejor continuación; el
+detalle añade la evidencia técnica que lo respalda.
 
 El registro final sigue dependiendo del resultado completo de Stockfish. Al recibir
 `bestmove`, se repite exactamente la misma función con las líneas finales validadas y

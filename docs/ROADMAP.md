@@ -28,6 +28,7 @@
 - [x] Indicadores visuales de calidad asociados a las jugadas del usuario.
 - [x] Primera colección de detectores tácticos y estratégicos verificables.
 - [x] Voz editorial determinista y feedback recuperable desde el historial.
+- [x] Feedback contextual v3 con resumen compacto y detalle visible separado.
 - [ ] Ampliar pistas progresivas 1/2/3, flechas y amenazas visuales.
 
 ## Fase 3 — Sesión y revisión

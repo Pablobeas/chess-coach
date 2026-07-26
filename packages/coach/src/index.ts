@@ -1,7 +1,10 @@
 import {
   applyMove,
   formatMovePhrase,
+  getCastlingRights,
+  getPieceAt,
   listLegalMoves,
+  listPieces,
   loadPosition,
   type GameSession,
   type MoveRecord,
@@ -36,6 +39,91 @@ export type MotifKind =
   | "equivalent"
   | "neutral"
   | "none";
+
+/** Verifiable reason names used by the contextual-v3 explanation contract. */
+export type ContextualReasonKind =
+  | "allowed-mate"
+  | "direct-material-loss"
+  | "left-piece-undefended"
+  | "ignored-threat"
+  | "allowed-forcing-attack"
+  | "lost-castling-right"
+  | "slow-development"
+  | "unidentified";
+
+export type ExplanationConfidence = "high" | "medium" | "low";
+export type BestMovePurpose =
+  | "avoids-mate"
+  | "prevents-capture"
+  | "defends-piece"
+  | "develops-piece"
+  | "castles"
+  | "preserves"
+  | "prepares-castling"
+  | "wins-material"
+  | "creates-check";
+
+export type ContextualFactRef =
+  | { readonly kind: "engine-mate"; readonly line: "before" | "after" }
+  | { readonly kind: "variation-move"; readonly ply: number }
+  | { readonly kind: "piece"; readonly square: string }
+  | { readonly kind: "castling-right"; readonly color: PlayerColor }
+  | { readonly kind: "development"; readonly square: string }
+  | { readonly kind: "multipv-equivalent" };
+
+export interface ContextualReason {
+  readonly kind: ContextualReasonKind;
+  readonly confidence: ExplanationConfidence;
+  readonly factRefs: readonly ContextualFactRef[];
+}
+
+export interface ContextualConsequence {
+  readonly kind: "mate" | "material-loss" | "forcing-attack" | "initiative";
+  readonly factRefs: readonly ContextualFactRef[];
+}
+
+/**
+ * Structured chess facts only. Visible wording is intentionally kept in
+ * CoachPresentation so that a migration can read old records without making
+ * up an explanation that was never analysed.
+ */
+export type ContextualExplanation =
+  | {
+      readonly mode: "explained";
+      readonly primaryReason: ContextualReason;
+      readonly consequence: ContextualConsequence;
+      readonly bestMovePurposes: readonly BestMovePurpose[];
+      readonly supportingVariation: readonly VerifiedMove[];
+    }
+  | {
+      readonly mode: "recommendation-only";
+      readonly primaryReason: {
+        readonly kind: "unidentified";
+        readonly confidence: "low";
+        readonly factRefs: readonly ContextualFactRef[];
+      };
+      readonly bestMovePurposes: readonly BestMovePurpose[];
+      readonly supportingVariation: readonly VerifiedMove[];
+    }
+  | {
+      readonly mode: "equivalent";
+      readonly primaryReason: {
+        readonly kind: "unidentified";
+        readonly confidence: "medium";
+        readonly factRefs: readonly ContextualFactRef[];
+      };
+      readonly bestMovePurposes: readonly BestMovePurpose[];
+      readonly supportingVariation: readonly VerifiedMove[];
+    };
+
+export interface CoachPresentation {
+  readonly locale: "es";
+  readonly templateId: string;
+  /** Compact card copy. */
+  readonly summary: string;
+  /** Expanded explanation. It must not be an exact copy of summary. */
+  readonly detail: string;
+}
 
 /**
  * Public Classification V2 Expected Points cutoffs.
@@ -177,8 +265,7 @@ export interface CoachHint {
  * controls visibility: Maia turns keep evidence but intentionally have no label,
  * copy, or hints intended for the player.
  */
-export interface CoachTurnRecord {
-  readonly schemaVersion: 2;
+interface CoachTurnRecordBase {
   readonly turn: {
     readonly ply: number;
     readonly actor: CoachActor;
@@ -191,9 +278,24 @@ export interface CoachTurnRecord {
   readonly evidence: CoachEvidence;
   readonly assessment?: MoveAssessment;
   readonly motif: MotifDetection;
+  /** v2-compatible compact copy; new views should use presentation. */
   readonly copy?: CoachCopy;
+  /** Missing on decoded schema-v2 records; never synthesized during migration. */
+  readonly explanation?: ContextualExplanation;
+  readonly presentation?: CoachPresentation;
   readonly hints: readonly CoachHint[];
 }
+
+/** Persisted schema before contextual explanations. It remains readable only. */
+export interface CoachTurnRecordV2 extends CoachTurnRecordBase {
+  readonly schemaVersion: 2;
+}
+
+export interface CoachTurnRecordV3 extends CoachTurnRecordBase {
+  readonly schemaVersion: 3;
+}
+
+export type CoachTurnRecord = CoachTurnRecordV2 | CoachTurnRecordV3;
 
 /** Compatibility view for the pre-v2 UI. New callers should use analyzeTurn. */
 export interface CoachFeedback {
@@ -649,6 +751,10 @@ function detectMotif(
 
   let kind: MotifKind = "neutral";
   let confidence: MotifDetection["confidence"] = "low";
+  const confirmedMaterialLoss =
+    isNegativeAssessment(assessment) ||
+    (assessment !== undefined &&
+      assessment.expectedLoss >= COACH_CLASSIFICATION_CONFIG.mistakeLoss);
   if (assessment?.context.mateLost || after.isCheckmate) {
     kind = "mate";
     confidence = "high";
@@ -656,7 +762,10 @@ function detectMotif(
   } else if (facts.some((fact) => fact.kind === "check")) {
     kind = "king-safety";
     confidence = "high";
-  } else if (facts.some((fact) => fact.kind === "hanging-piece")) {
+  } else if (
+    confirmedMaterialLoss &&
+    facts.some((fact) => fact.kind === "hanging-piece")
+  ) {
     kind = "hanging-piece";
     confidence = "high";
   } else if (
@@ -694,6 +803,240 @@ function detectMotif(
     confidence,
     facts: Object.freeze(facts.map((fact) => Object.freeze(fact))),
     evidence: Object.freeze(evidence),
+  });
+}
+
+const NEGATIVE_LABELS: readonly MoveLabel[] = Object.freeze([
+  "inaccuracy",
+  "mistake",
+  "blunder",
+  "miss",
+]);
+
+const CONTEXTUAL_THRESHOLDS = Object.freeze({
+  /** A tactical claim requires at least an expected-score mistake-sized drop. */
+  verifiedTacticalLoss: COACH_CLASSIFICATION_CONFIG.noiseLoss,
+  /** Development language is limited to the opening, not a late-game judgement. */
+  openingPlyAtMost: 20,
+});
+
+function isNegativeAssessment(assessment: MoveAssessment | undefined): boolean {
+  return assessment !== undefined && NEGATIVE_LABELS.includes(assessment.label);
+}
+
+function isCastlingMove(move: VerifiedMove | MoveRecord): boolean {
+  const from = move.uci.slice(0, 2);
+  const to = move.uci.slice(2, 4);
+  return (
+    (from === "e1" && (to === "g1" || to === "c1")) ||
+    (from === "e8" && (to === "g8" || to === "c8"))
+  );
+}
+
+function isMinorPieceDevelopment(
+  beforeFen: string,
+  move: VerifiedMove | MoveRecord,
+): boolean {
+  const piece = getPieceAt(beforeFen, move.uci.slice(0, 2));
+  return (
+    (piece?.type === "n" || piece?.type === "b") &&
+    (piece.color === "white" ? move.uci[1] === "1" : move.uci[1] === "8")
+  );
+}
+
+function lostMoverCastlingRight(
+  beforeFen: string,
+  afterFen: string,
+  color: PlayerColor,
+): boolean {
+  const beforeRights = getCastlingRights(beforeFen)[color];
+  const afterRights = getCastlingRights(afterFen)[color];
+  return (
+    (beforeRights.kingside && !afterRights.kingside) ||
+    (beforeRights.queenside && !afterRights.queenside)
+  );
+}
+
+function bestMovePurposes(
+  beforeFen: string,
+  assessment: MoveAssessment,
+  move: VerifiedMove | undefined,
+): readonly BestMovePurpose[] {
+  if (!move) return Object.freeze([]);
+  const purposes: BestMovePurpose[] = [];
+  const from = move.uci.slice(0, 2);
+  const piece = getPieceAt(beforeFen, from);
+  if (assessment.context.mateLost) purposes.push("avoids-mate");
+  if (isCastlingMove(move)) purposes.push("castles");
+  if (isMinorPieceDevelopment(beforeFen, move)) purposes.push("develops-piece");
+  if (move.san.includes("+") || move.san.includes("#")) purposes.push("creates-check");
+  const rights = getCastlingRights(beforeFen)[piece?.color ?? "white"];
+  if (
+    (piece?.type === "n" || piece?.type === "b") &&
+    (rights.kingside || rights.queenside)
+  ) {
+    purposes.push("prepares-castling");
+  }
+  return Object.freeze([...new Set(purposes)]);
+}
+
+function contextualExplanation(
+  before: GameSession,
+  after: GameSession,
+  played: MoveRecord,
+  assessment: MoveAssessment,
+  bestVariation: readonly VerifiedMove[],
+  afterVariation: readonly VerifiedMove[],
+  beforeLines: readonly EngineLine[],
+): ContextualExplanation {
+  const bestMove = bestVariation[0];
+  const purposes = bestMovePurposes(
+    before.fen,
+    assessment,
+    bestMove,
+  );
+  const supportingVariation = Object.freeze(bestVariation.slice(0, 3));
+  if (assessment.context.equivalent || linesAreEquivalent(beforeLines)) {
+    return Object.freeze({
+      mode: "equivalent",
+      primaryReason: Object.freeze({
+        kind: "unidentified",
+        confidence: "medium",
+        factRefs: Object.freeze([
+          { kind: "multipv-equivalent" } as const,
+        ]),
+      }),
+      bestMovePurposes: purposes,
+      supportingVariation,
+    });
+  }
+
+  const response = afterVariation[0];
+  const responseTarget = response?.uci.slice(2, 4);
+  const tacticalDrop =
+    assessment.expectedLoss >= CONTEXTUAL_THRESHOLDS.verifiedTacticalLoss;
+  const responseTargetPiece = responseTarget
+    ? getPieceAt(after.fen, responseTarget)
+    : undefined;
+  const responseIsCapture =
+    response?.san.includes("x") === true ||
+    (responseTargetPiece !== undefined && responseTargetPiece.color !== after.turn);
+  const responseCapturesMovedPiece =
+    responseIsCapture && responseTarget === played.to;
+  // A validated PV capture plus the named score drop is sufficient evidence;
+  // do not treat the mere availability of a legal capture as a motif.
+  const materialClaimAllowed =
+    isNegativeAssessment(assessment) ||
+    assessment.expectedLoss >= COACH_CLASSIFICATION_CONFIG.mistakeLoss;
+  const hasConfirmedCapture =
+    responseIsCapture && tacticalDrop && materialClaimAllowed;
+  const hasForcingCheck =
+    response !== undefined &&
+    (response.san.includes("+") || response.san.includes("#")) &&
+    tacticalDrop;
+
+  const reason = (
+    kind: ContextualReasonKind,
+    confidence: ExplanationConfidence,
+    factRefs: readonly ContextualFactRef[],
+    consequence: ContextualConsequence,
+  ): ContextualExplanation =>
+    Object.freeze({
+      mode: "explained",
+      primaryReason: Object.freeze({ kind, confidence, factRefs: Object.freeze([...factRefs]) }),
+      consequence: Object.freeze(consequence),
+      bestMovePurposes: purposes,
+      supportingVariation,
+    });
+
+  if (assessment.context.mateLost) {
+    return reason(
+      "allowed-mate",
+      "high",
+      [{ kind: "engine-mate", line: "before" }, { kind: "engine-mate", line: "after" }],
+      { kind: "mate", factRefs: [{ kind: "engine-mate", line: "after" }] },
+    );
+  }
+  if (hasConfirmedCapture && responseCapturesMovedPiece) {
+    return reason(
+      "left-piece-undefended",
+      "high",
+      [{ kind: "piece", square: played.to }, { kind: "variation-move", ply: 0 }],
+      { kind: "material-loss", factRefs: [{ kind: "variation-move", ply: 0 }] },
+    );
+  }
+  if (hasConfirmedCapture) {
+    return reason(
+      "direct-material-loss",
+      "high",
+      [{ kind: "piece", square: responseTarget! }, { kind: "variation-move", ply: 0 }],
+      { kind: "material-loss", factRefs: [{ kind: "variation-move", ply: 0 }] },
+    );
+  }
+  if (
+    response !== undefined &&
+    (response.san.includes("x") || response.san.includes("+")) &&
+    materialClaimAllowed
+  ) {
+    return reason(
+      "ignored-threat",
+      "medium",
+      [{ kind: "variation-move", ply: 0 }],
+      {
+        kind: response.san.includes("x") ? "material-loss" : "forcing-attack",
+        factRefs: [{ kind: "variation-move", ply: 0 }],
+      },
+    );
+  }
+  if (hasForcingCheck && isNegativeAssessment(assessment)) {
+    return reason(
+      "allowed-forcing-attack",
+      "medium",
+      [{ kind: "variation-move", ply: 0 }],
+      { kind: "forcing-attack", factRefs: [{ kind: "variation-move", ply: 0 }] },
+    );
+  }
+  if (
+    isNegativeAssessment(assessment) &&
+    !isCastlingMove(played) &&
+    lostMoverCastlingRight(before.fen, after.fen, before.turn)
+  ) {
+    return reason(
+      "lost-castling-right",
+      "high",
+      [{ kind: "castling-right", color: before.turn }],
+      { kind: "initiative", factRefs: [{ kind: "castling-right", color: before.turn }] },
+    );
+  }
+  const stillUndeveloped = listPieces(after.fen).some(
+    (piece) =>
+      piece.color === before.turn &&
+      (piece.type === "n" || piece.type === "b") &&
+      (piece.color === "white" ? piece.square[1] === "1" : piece.square[1] === "8"),
+  );
+  if (
+    isNegativeAssessment(assessment) &&
+    after.history.length <= CONTEXTUAL_THRESHOLDS.openingPlyAtMost &&
+    stillUndeveloped &&
+    !isCastlingMove(played) &&
+    !isMinorPieceDevelopment(before.fen, played)
+  ) {
+    return reason(
+      "slow-development",
+      "medium",
+      [{ kind: "development", square: played.to }],
+      { kind: "initiative", factRefs: [{ kind: "development", square: played.to }] },
+    );
+  }
+  return Object.freeze({
+    mode: "recommendation-only",
+    primaryReason: Object.freeze({
+      kind: "unidentified",
+      confidence: "low",
+      factRefs: Object.freeze([]),
+    }),
+    bestMovePurposes: purposes,
+    supportingVariation,
   });
 }
 
@@ -774,35 +1117,70 @@ function formatVariationPhrases(
   return Object.freeze(phrases);
 }
 
-function makeCopy(
+function reasonSentence(reason: ContextualReasonKind): string {
+  switch (reason) {
+    case "allowed-mate": return "Esta jugada permite una amenaza de mate.";
+    case "direct-material-loss": return "Esta jugada permite perder material de inmediato.";
+    case "left-piece-undefended": return "Esta jugada deja una pieza sin suficiente defensa.";
+    case "ignored-threat": return "Esta jugada no responde a una amenaza inmediata.";
+    case "allowed-forcing-attack": return "Esta jugada facilita un ataque con jaque.";
+    case "lost-castling-right": return "Esta jugada pierde un derecho de enroque.";
+    case "slow-development": return "Esta jugada es lenta para el desarrollo.";
+    case "unidentified": return "La alternativa recomendada ofrece una mejora comprobada.";
+  }
+}
+
+function consequenceSentence(consequence: ContextualConsequence | undefined): string {
+  switch (consequence?.kind) {
+    case "mate": return "El rival puede continuar con una secuencia forzada contra tu rey.";
+    case "material-loss": return "El rival puede aprovecharlo para ganar material.";
+    case "forcing-attack": return "El rival gana tiempo con una respuesta forzada.";
+    case "initiative": return "El rival puede completar su desarrollo con más comodidad.";
+    default: return "";
+  }
+}
+
+function purposeSentence(purposes: readonly BestMovePurpose[]): string {
+  const labels: Readonly<Record<BestMovePurpose, string>> = {
+    "avoids-mate": "evita la amenaza de mate", "prevents-capture": "evita una captura inmediata",
+    "defends-piece": "defiende una pieza", "develops-piece": "desarrolla una pieza",
+    castles: "pone al rey a salvo mediante el enroque", preserves: "conserva la posición",
+    "prepares-castling": "prepara el enroque", "wins-material": "gana material", "creates-check": "crea un jaque",
+  };
+  const described = purposes.slice(0, 3).map((purpose) => labels[purpose]);
+  if (described.length === 0) return "mejora la posición de forma comprobada";
+  if (described.length === 1) return described[0]!;
+  return described.length === 2 ? `${described[0]} y ${described[1]}` : `${described[0]}, ${described[1]} y ${described[2]}`;
+}
+
+function makePresentation(
   before: GameSession,
-  played: MoveRecord,
-  assessment: MoveAssessment,
-  motif: MotifDetection,
-  bestMove: VerifiedMove | undefined,
-): CoachCopy {
-  const uncertainty = assessment.isEstimated ? " (estimación)" : "";
-  const bestStatus =
-    bestMove === undefined
-      ? "unverified"
-      : bestMove.uci === played.uci
-        ? "played"
-        : "alternative";
-  const playedBestButNegative =
-    bestMove?.uci === played.uci && mustAvoidBestClaim(assessment);
-  const text =
-    bestMove === undefined
-      ? `Sin una PV legal verificable, no hay una mejor jugada que mostrar${uncertainty}.`
-      : playedBestButNegative
-        ? `${labelCopy(assessment.label)}${uncertainty}: ${compactReason(assessment, motif, bestMove, played)}. La línea validada empieza con ${describeMove(before.fen, bestMove, "mover")}.`
-        : bestMove.uci === played.uci
-          ? `Es la mejor jugada${uncertainty}: ${describeMove(before.fen, bestMove, "mover")}. ${compactReason(assessment, motif, bestMove, played)}.`
-          : `${labelCopy(assessment.label)}${uncertainty}: ${compactReason(assessment, motif, bestMove, played)}. Mejor: ${describeMove(before.fen, bestMove, "mover")}.`;
+  explanation: ContextualExplanation,
+): CoachPresentation {
+  const bestMove = explanation.supportingVariation[0];
+  const recommendation = bestMove
+    ? `${describeMove(before.fen, bestMove, "mover")} ${purposeSentence(explanation.bestMovePurposes)}`
+    : "conviene revisar una alternativa legal";
+  const prefix = explanation.mode === "equivalent"
+    ? "Hay varias jugadas con resultado parecido."
+    : explanation.mode === "recommendation-only"
+      ? "No hay una pérdida táctica inmediata confirmada."
+      : reasonSentence(explanation.primaryReason.kind);
+  const consequence = explanation.mode === "explained" ? consequenceSentence(explanation.consequence) : "";
+  const summary = `${prefix} Considera ${recommendation}.`;
+  const detail = [prefix, consequence, bestMove
+    ? `${describeMove(before.fen, bestMove, "mover")} era preferible porque ${purposeSentence(explanation.bestMovePurposes)}.`
+    : "Revisa las alternativas legales antes de decidir."].filter(Boolean).join(" ");
   return Object.freeze({
     locale: "es",
-    templateId: `turn-v5-${assessment.label}-${motif.kind}-${bestStatus}`,
-    text,
+    templateId: `turn-v6-${explanation.mode}-${explanation.primaryReason.kind}-${bestMove ? "recommendation" : "no-recommendation"}`,
+    summary,
+    detail: detail === summary ? `${detail} Busca una respuesta que conserve tus opciones.` : detail,
   });
+}
+
+function makeCopy(presentation: CoachPresentation): CoachCopy {
+  return Object.freeze({ locale: presentation.locale, templateId: presentation.templateId, text: presentation.summary });
 }
 
 function makeHints(
@@ -865,10 +1243,142 @@ export function normalizeCoachTurnRecord(
       record.motif,
       record.evidence.verifiedBestVariation,
     );
-    return Object.freeze({ ...record, hints });
+    return Object.freeze({ ...record, hints }) as CoachTurnRecord;
   } catch {
     return record;
   }
+}
+
+/**
+ * Defensive persistence boundary for both record versions. It only accepts an
+ * explanation when schema v3 actually stored one; loading v2 never invents
+ * contextual chess facts from copy text.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasField(record: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, field);
+}
+
+function isSquare(value: unknown): value is string {
+  return typeof value === "string" && /^[a-h][1-8]$/u.test(value);
+}
+
+function isVerifiedMoveValue(value: unknown): value is VerifiedMove {
+  return (
+    isRecord(value) &&
+    typeof value.uci === "string" &&
+    /^[a-h][1-8][a-h][1-8][qrbn]?$/u.test(value.uci) &&
+    typeof value.san === "string"
+  );
+}
+
+function isFactRef(value: unknown): value is ContextualFactRef {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "engine-mate":
+      return value.line === "before" || value.line === "after";
+    case "variation-move":
+      return typeof value.ply === "number" && Number.isInteger(value.ply) && value.ply >= 0;
+    case "piece":
+    case "development":
+      return isSquare(value.square);
+    case "castling-right":
+      return value.color === "white" || value.color === "black";
+    case "multipv-equivalent":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isPrimaryReason(value: unknown): value is ContextualReason {
+  const kinds: readonly ContextualReasonKind[] = [
+    "allowed-mate", "direct-material-loss", "left-piece-undefended",
+    "ignored-threat", "allowed-forcing-attack", "lost-castling-right",
+    "slow-development", "unidentified",
+  ];
+  return (
+    isRecord(value) &&
+    typeof value.kind === "string" && kinds.includes(value.kind as ContextualReasonKind) &&
+    (value.confidence === "high" || value.confidence === "medium" || value.confidence === "low") &&
+    Array.isArray(value.factRefs) && value.factRefs.every(isFactRef)
+  );
+}
+
+function isConsequence(value: unknown): value is ContextualConsequence {
+  return (
+    isRecord(value) &&
+    (value.kind === "mate" || value.kind === "material-loss" || value.kind === "forcing-attack" || value.kind === "initiative") &&
+    Array.isArray(value.factRefs) && value.factRefs.every(isFactRef)
+  );
+}
+
+function isBestMovePurpose(value: unknown): value is BestMovePurpose {
+  return typeof value === "string" && [
+    "avoids-mate", "prevents-capture", "defends-piece", "develops-piece",
+    "castles", "preserves", "prepares-castling", "wins-material", "creates-check",
+  ].includes(value);
+}
+
+function isContextualExplanationValue(value: unknown): value is ContextualExplanation {
+  if (!isRecord(value) || !isPrimaryReason(value.primaryReason) ||
+    !Array.isArray(value.bestMovePurposes) || !value.bestMovePurposes.every(isBestMovePurpose) ||
+    !Array.isArray(value.supportingVariation) || !value.supportingVariation.every(isVerifiedMoveValue)) return false;
+  const reason = value.primaryReason;
+  if (value.mode === "explained") {
+    return reason.kind !== "unidentified" && hasField(value, "consequence") && isConsequence(value.consequence);
+  }
+  if (value.mode === "recommendation-only") {
+    return !hasField(value, "consequence") && reason.kind === "unidentified" &&
+      reason.confidence === "low" && reason.factRefs.length === 0;
+  }
+  return value.mode === "equivalent" && !hasField(value, "consequence") &&
+    reason.kind === "unidentified" && reason.confidence === "medium" &&
+    reason.factRefs.length === 1 && reason.factRefs[0]?.kind === "multipv-equivalent";
+}
+
+function isPresentation(value: unknown): value is CoachPresentation {
+  return isRecord(value) && value.locale === "es" && typeof value.templateId === "string" &&
+    typeof value.summary === "string" && typeof value.detail === "string" &&
+    value.summary !== value.detail;
+}
+
+export function decodeCoachTurnRecord(value: unknown): CoachTurnRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value;
+  if (
+    (candidate.schemaVersion !== 2 && candidate.schemaVersion !== 3) ||
+    !isRecord(candidate.turn) ||
+    !isRecord(candidate.evidence) ||
+    !isRecord(candidate.motif) ||
+    !Array.isArray(candidate.hints)
+  ) return undefined;
+  if (candidate.schemaVersion === 2) {
+    if (hasField(candidate, "explanation") || hasField(candidate, "presentation")) return undefined;
+  } else if (candidate.explanation === undefined) {
+    if (candidate.presentation !== undefined) return undefined;
+  } else {
+    const explanation = candidate.explanation;
+    if (!isContextualExplanationValue(explanation) || !isPresentation(candidate.presentation)) return undefined;
+    if (typeof candidate.turn.beforeFen !== "string") return undefined;
+    const legalVariation = verifiedVariation(
+      candidate.turn.beforeFen,
+      explanation.supportingVariation.map((move) => move.uci),
+    );
+    if (
+      !legalVariation.complete ||
+      legalVariation.moves.length !== explanation.supportingVariation.length ||
+      legalVariation.moves.some(
+        (move, index) =>
+          move.uci !== explanation.supportingVariation[index]?.uci ||
+          move.san !== explanation.supportingVariation[index]?.san,
+      )
+    ) return undefined;
+  }
+  return normalizeCoachTurnRecord(candidate as unknown as CoachTurnRecord);
 }
 
 export function analyzeTurn(
@@ -907,17 +1417,28 @@ export function analyzeTurn(
     afterVariation.moves,
     beforeLines,
   );
-  const copy =
+  const explanation =
     assessment === undefined
       ? undefined
-      : makeCopy(before, played, assessment, motif, bestMove);
+      : contextualExplanation(
+          before,
+          after,
+          played,
+          assessment,
+          variation.moves,
+          afterVariation.moves,
+          beforeLines,
+        );
+  const presentation =
+    explanation === undefined ? undefined : makePresentation(before, explanation);
+  const copy = presentation === undefined ? undefined : makeCopy(presentation);
   const hints =
     assessment === undefined
       ? Object.freeze([])
       : makeHints(before.fen, motif, variation.moves);
 
   return Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: 3,
     turn: Object.freeze({
       ply: after.history.length,
       actor,
@@ -946,6 +1467,8 @@ export function analyzeTurn(
     }),
     ...(assessment === undefined ? {} : { assessment }),
     motif,
+    ...(explanation === undefined ? {} : { explanation }),
+    ...(presentation === undefined ? {} : { presentation }),
     ...(copy === undefined ? {} : { copy }),
     hints,
   });

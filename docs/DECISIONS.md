@@ -276,3 +276,24 @@ La preemption interna del coach por rival prioritario no se considera un error d
 usuario: conserva `pending` y reencola una sola vez. Las cancelaciones externas o los
 resultados stale no reintentan. Si la misma petición sufre una segunda interrupción o
 error, el estado final es `unavailable` y el usuario debe lanzar un retry manual.
+
+## ADR-018 — Feedback contextual v3 con explicación/presentación separadas
+
+**Estado:** aceptada.
+
+El feedback pedagógico visible pasa a un contrato contextual v3. Stockfish sigue
+aportando solo evidencia técnica; el entrenador aplica detectores deterministas
+priorizados y construye una explicación estructurada. La explicación guarda la causa
+verificable, la consecuencia principal, la mejor jugada y, cuando procede, una
+variante legal de apoyo. La presentación expone un `summary` compacto y un `detail`
+ampliado, pero ambos derivan del mismo registro.
+
+La confianza interna permanece fuera de la UI. `high` y `medium` pueden justificar
+una causa visible; `low` se degrada a `recommendation-only` y muestra solo la mejor
+continuación defendible. La PV se usa como evidencia, no como texto de interfaz, y el
+MVP mantiene su restricción de no introducir LLM como fuente de verdad.
+
+`CoachTurnRecord` v3 convive con lectura de v2 y `StoredGame` sigue en v6. No se
+añaden detectores avanzados fuera del alcance actual —como forks, pins o estructura
+de peones—, y las pruebas semánticas deben comprobar ausencia de invención, no
+copiar frases fijas del motor.

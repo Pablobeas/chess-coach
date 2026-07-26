@@ -1,102 +1,108 @@
-# Calidad y evaluaciones
+﻿# Calidad y evaluaciones
 
-Se prueban navegaciÃ³n sin bifurcar, creaciÃ³n/eliminaciÃ³n/promociÃ³n reversible,
-lÃ­mite de cinco pruebas y persistencia/migraciÃ³n v5â†’v6, incluyendo datos corruptos.
+Se prueban navegación sin bifurcar, creación/eliminación/promoción reversible,
+límite de cinco pruebas y persistencia/migración v5→v6, incluyendo datos corruptos.
 
-## MetodologÃ­a de desarrollo
+## Metodología de desarrollo
 
-Usamos desarrollo guiado por funcionalidades con TDD en las capas crÃ­ticas. Cada
-entrega debe ser una rebanada vertical pequeÃ±a que aporte un flujo observable, no
-una colecciÃ³n de capas incompletas.
+Usamos desarrollo guiado por funcionalidades con TDD en las capas críticas. Cada
+entrega debe ser una rebanada vertical pequeña que aporte un flujo observable, no
+una colección de capas incompletas.
 
 El ciclo es:
 
-1. Criterios de aceptaciÃ³n de la funcionalidad.
+1. Criterios de aceptación de la funcionalidad.
 2. Tests primero para dominio, contratos y riesgos conocidos.
-3. ImplementaciÃ³n mÃ­nima.
-4. IntegraciÃ³n y E2E si el flujo cruza Worker, almacenamiento o UI.
-5. RevisiÃ³n de rendimiento, accesibilidad y regresiones.
+3. Implementación mínima.
+4. Integración y E2E si el flujo cruza Worker, almacenamiento o UI.
+5. Revisión de rendimiento, accesibilidad y regresiones.
 
 La interfaz puede explorarse visualmente antes de fijar todos sus detalles, pero no
-se considera terminada hasta que sus estados importantes tengan pruebas de regresiÃ³n.
+se considera terminada hasta que sus estados importantes tengan pruebas de regresión.
 
-## PirÃ¡mide de pruebas
+## Pirámide de pruebas
 
-- Unitarias: normalizaciÃ³n de puntuaciones, UCI, clasificaciÃ³n y pistas.
-- IntegraciÃ³n: Worker simulado, cancelaciÃ³n, mensajes tardÃ­os y sesiÃ³n completa.
+- Unitarias: normalización de puntuaciones, UCI, clasificación y pistas.
+- Integración: Worker simulado, cancelación, mensajes tardíos y sesión completa.
 - E2E: jugar, deshacer, pausar, reanudar, guardar y exportar PGN.
-- Evaluaciones: posiciones FEN/PGN con invariantes pedagÃ³gicas.
-- Rendimiento: latencia, memoria, tamaÃ±o WASM y bloqueo del hilo principal.
+- Evaluaciones: posiciones FEN/PGN con invariantes pedagógicas.
+- Rendimiento: latencia, memoria, tamaño WASM y bloqueo del hilo principal.
 
-## Invariantes crÃ­ticas
+## Invariantes críticas
 
-- Una evaluaciÃ³n siempre declara perspectiva.
+- Una evaluación siempre declara perspectiva.
 - Mate y centipeones son variantes incompatibles del mismo tipo.
-- Un resultado tardÃ­o no puede sobrescribir una posiciÃ³n nueva.
-- Deshacer invalida anÃ¡lisis y feedback posteriores.
+- Un resultado tardío no puede sobrescribir una posición nueva.
+- Deshacer invalida análisis y feedback posteriores.
 - Una pista de nivel 3 siempre propone un movimiento legal.
-- Toda evaluaciÃ³n visible usa la perspectiva del usuario, tambiÃ©n tras una jugada de Maia.
-- Solo las jugadas del usuario reciben clasificaciÃ³n, icono y explicaciÃ³n pedagÃ³gica.
+- Toda evaluación visible usa la perspectiva del usuario, también tras una jugada de Maia.
+- Solo las jugadas del usuario reciben clasificación, icono y explicación pedagógica.
 - Una cita de movimiento, pieza, casilla o consecuencia debe estar respaldada por evidencia validada.
-- El modo sin ayudas no muestra flechas ni evaluaciÃ³n accidentalmente.
-- La partida se puede recuperar despuÃ©s de recargar la PWA.
+- El modo sin ayudas no muestra flechas ni evaluación accidentalmente.
+- La partida se puede recuperar después de recargar la PWA.
 - El color del usuario ocupa la zona inferior y el orden DOM del tablero coincide con
   su orden visual, tanto con blancas como con negras.
-- `ready` de Maia implica que el modelo completÃ³ una inferencia de calentamiento; un
-  error o reintento nunca modifica la posiciÃ³n mientras no exista una jugada legal.
+- `ready` de Maia implica que el modelo completó una inferencia de calentamiento; un
+  error o reintento nunca modifica la posición mientras no exista una jugada legal.
 - El lanzador de desarrollo no deja la web disponible hasta que `/health` confirma
   `ready`, y un 502 del proxy se interpreta como bridge no disponible, no como una
-  respuesta ajedrecÃ­stica vÃ¡lida.
-- La navegaciÃ³n conserva una sola sesiÃ³n completa y un cursor; no acumula una sesiÃ³n
-  prefijo por cada deshacer o selecciÃ³n histÃ³rica.
-- El precÃ¡lculo del turno humano debe coincidir exactamente en FEN, perspectiva,
-  preset, MultiPV y lÃ­mite con la bÃºsqueda anterior consumida por el entrenador.
-- La evaluaciÃ³n posterior a la jugada siempre procede de una bÃºsqueda completa con
-  su presupuesto normal; nunca de transformar la puntuaciÃ³n MultiPV de la raÃ­z.
-- Un icono provisional procede Ãºnicamente de progreso normalizado de la misma bÃºsqueda
+  respuesta ajedrecística válida.
+- La navegación conserva una sola sesión completa y un cursor; no acumula una sesión
+  prefijo por cada deshacer o selección histórica.
+- El precálculo del turno humano debe coincidir exactamente en FEN, perspectiva,
+  preset, MultiPV y límite con la búsqueda anterior consumida por el entrenador.
+- La evaluación posterior a la jugada siempre procede de una búsqueda completa con
+  su presupuesto normal; nunca de transformar la puntuación MultiPV de la raíz.
+- Un icono provisional procede únicamente de progreso normalizado de la misma búsqueda
   posterior con PV reproducibles por completo, se identifica como provisional y nunca
   se persiste.
-- El icono final y `CoachTurnRecord.assessment` se calculan mediante la misma funciÃ³n
-  pura; navegar o cancelar impide que progreso tardÃ­o reaparezca.
+- El icono final y `CoachTurnRecord.assessment` se calculan mediante la misma función
+  pura; navegar o cancelar impide que progreso tardío reaparezca.
 
 ## Evaluaciones de ajedrez
 
-Las fixtures deben cubrir aperturas, tÃ¡cticas, posiciones tranquilas, finales, mates,
-ahogados, Ãºnica jugada, varias jugadas equivalentes y posiciones ya perdidas. Evita
-asserts exactos de centipeones salvo que tambiÃ©n fijes motor, hash, hilos, hash table,
+Las fixtures deben cubrir aperturas, tácticas, posiciones tranquilas, finales, mates,
+ahogados, única jugada, varias jugadas equivalentes y posiciones ya perdidas. Evita
+asserts exactos de centipeones salvo que también fijes motor, hash, hilos, hash table,
 semilla y presupuesto.
 
-Las evaluaciones de texto comprueban propiedades â€”legalidad, motivo permitido,
-honestidad, presencia de alternativa y ausencia de contradiccionesâ€” en lugar de fijar
+Las evaluaciones de texto comprueban propiedades —legalidad, motivo permitido,
+honestidad, presencia de alternativa y ausencia de contradicciones— en lugar de fijar
 frases completas. La misma entrada debe ser reproducible y las jugadas cercanas no
-deben repetir de forma mecÃ¡nica la misma familia de plantilla.
+deben repetir de forma mecánica la misma familia de plantilla.
+
+Las evaluaciones semánticas del feedback v3 verifican además que la vista compacta y
+la ampliada no son idénticas, que la confianza interna baja no inventa una causa y
+que el texto no expone PV, centipeones ni términos internos.
 
 ## Presupuestos iniciales
 
-- Ninguna espera sÃ­ncrona del motor en el hilo principal.
-- Feedback intermedio visible antes de que una bÃºsqueda larga parezca bloqueo.
-- CancelaciÃ³n observable al cambiar de posiciÃ³n.
+- Ninguna espera síncrona del motor en el hilo principal.
+- Feedback intermedio visible antes de que una búsqueda larga parezca bloqueo.
+- Cancelación observable al cambiar de posición.
 - Una fixture de 100 medias jugadas conserva FEN/PGN y valida historial y feedback
   con recorridos lineales, sin reconstruir cada prefijo por separado.
-- La validaciÃ³n legal de una PV UCI completa ocurre al publicar las lÃ­neas finales,
-  no para cada actualizaciÃ³n intermedia de profundidad.
+- La validación legal de una PV UCI completa ocurre al publicar las líneas finales,
+  no para cada actualización intermedia de profundidad.
 - El progreso UCI aparece antes del resultado final, no genera un segundo `go`, conserva
-  el lÃ­mite solicitado y deja de notificarse tras abortar o completar la bÃºsqueda.
-- Si un backend publica progreso y despuÃ©s falla, se retira el provisional antes de
+  el límite solicitado y deja de notificarse tras abortar o completar la búsqueda.
+- Si un backend publica progreso y después falla, se retira el provisional antes de
   aceptar progreso o resultado de un fallback.
-- La cachÃ© de anÃ¡lisis distingue FEN, perspectiva, preset, MultiPV y lÃ­mite; no guarda
-  bÃºsquedas canceladas ni fallidas y mantiene una capacidad mÃ¡xima explÃ­cita.
-- Dos solicitudes simultÃ¡neas con la misma clave comparten una sola bÃºsqueda; cancelar
-  al consumidor no cancela un precÃ¡lculo independiente que ya estÃ¡ en curso.
-- Stockfish configura `Hash=64` una sola vez antes de la primera bÃºsqueda y conserva
-  la tabla de transposiciÃ³n entre anÃ¡lisis.
-- El presupuesto final por dispositivo se fijarÃ¡ tras medir hardware real.
+- La caché de análisis distingue FEN, perspectiva, preset, MultiPV y límite; no guarda
+  búsquedas canceladas ni fallidas y mantiene una capacidad máxima explícita.
+- Dos solicitudes simultáneas con la misma clave comparten una sola búsqueda; cancelar
+  al consumidor no cancela un precálculo independiente que ya está en curso.
+- Stockfish configura `Hash=64` una sola vez antes de la primera búsqueda y conserva
+  la tabla de transposición entre análisis.
+- El presupuesto final por dispositivo se fijará tras medir hardware real.
+- El feedback v3 termina siempre en `ready` o `unavailable`, y un resultado tardío solo
+  se aplica si la media jugada sigue siendo la misma identidad semántica.
 
 ## Puerta de entrega
 
 Una funcionalidad pasa cuando `pnpm check` termina correctamente, sus criterios de
-aceptaciÃ³n estÃ¡n cubiertos, la revisiÃ³n independiente no tiene hallazgos crÃ­ticos y
-las brechas de verificaciÃ³n manual estÃ¡n declaradas.
+aceptación están cubiertos, la revisión independiente no tiene hallazgos críticos y
+las brechas de verificación manual están declaradas.
 
 ## Publicación en Pages
 
@@ -111,7 +117,7 @@ las brechas de verificaciÃ³n manual estÃ¡n declaradas.
 
 ## Cobertura actual
 
-- Unitarias y de integración cubren la identidad semántica de media jugada, la
+- Unitarias e integración cubren la identidad semántica de media jugada, la
   cancelación, el manejo de resultados tardíos y la transición de `pending` a
   `ready`/`unavailable`.
 - Las regresiones de UI deben incluir móvil y escritorio con Chromium y WebKit en

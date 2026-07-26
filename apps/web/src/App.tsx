@@ -398,6 +398,7 @@ export function finalizePendingCoachAttempt(
   const feedbackByPly = line.feedbackByPly.map((entry) =>
     entry.historyIndex === identity.historyIndex &&
     entry.uci === identity.uci &&
+    entry.actor === identity.actor &&
     entry.beforeFen === identity.beforeFen &&
     entry.afterFen === identity.afterFen &&
     entry.status === "pending"
@@ -559,46 +560,18 @@ const capturedTypePlural: Record<PieceType, string> = {
   k: "reyes",
 };
 
-const motifLabels: Readonly<Record<string, string>> = Object.freeze({
-  mate: "mate o amenaza de mate",
-  material: "material",
-  "hanging-piece": "pieza en peligro",
-  tactical: "táctica",
-  "king-safety": "seguridad del rey",
-  threat: "amenaza",
-  structure: "estructura de peones",
-  development: "desarrollo",
-  activity: "actividad medida",
-  equivalent: "alternativas equivalentes",
-  neutral: "posición",
-  none: "sin motivo adicional",
-});
-
-export function compactReadyFeedbackSummary({
-  playedSan,
-  classification,
-  motif,
-  playedUci,
-  bestUci,
-  bestMove,
-}: {
-  readonly playedSan: string;
-  readonly classification: MoveLabel | undefined;
-  readonly motif: string;
-  readonly playedUci: string;
-  readonly bestUci: string | undefined;
-  readonly bestMove: string | undefined;
-}): Readonly<{ title: string; reason: string }> {
-  const quality = classification
-    ? qualityMeta[classification].label
-    : "Analizada";
-  const recommendedMove =
-    bestUci !== undefined && bestUci !== playedUci && bestMove
-      ? ` · Mejor: ${bestMove}`
-      : "";
+/**
+ * v3 carries the only contextual text we may show. Older records keep their
+ * saved wording rather than deriving a new claim from historic evidence.
+ */
+export function feedbackPresentationFor(
+  feedback: CoachTurnRecord,
+): Readonly<{ summary: string; detail: string }> {
+  if (feedback.presentation) return feedback.presentation;
   return Object.freeze({
-    title: `${playedSan} · ${quality}`,
-    reason: `Motivo: ${motifLabels[motif] ?? "posición"}${recommendedMove}`,
+    summary: "El análisis detallado de esta jugada no está disponible.",
+    detail:
+      "Esta partida se guardó con una versión anterior del entrenador. Puedes continuar jugando o analizar una jugada nueva.",
   });
 }
 
@@ -717,19 +690,25 @@ export function AdvicePanel({
       feedback
         ? formatMoveSequence(
             feedback.turn.beforeFen,
-            feedback.evidence.verifiedBestVariation,
+            feedback.explanation?.supportingVariation ??
+              feedback.evidence.verifiedBestVariation,
           )
         : [],
-    [feedback?.turn.beforeFen, feedback?.evidence.verifiedBestVariation],
+    [
+      feedback?.turn.beforeFen,
+      feedback?.evidence.verifiedBestVariation,
+      feedback?.explanation?.supportingVariation,
+    ],
   );
+  const presentation = feedback ? feedbackPresentationFor(feedback) : undefined;
   const compactSummary = feedback
-    ? compactReadyFeedbackSummary({
-        playedSan: feedback.turn.playedSan,
-        classification: feedback.assessment?.label,
-        motif: feedback.motif.kind,
-        playedUci: feedback.turn.playedUci,
-        bestUci: feedback.evidence.verifiedBestVariation[0]?.uci,
-        bestMove: displayedLine[0],
+    ? Object.freeze({
+        title: `${feedback.turn.playedSan} · ${
+          feedback.assessment
+            ? qualityMeta[feedback.assessment.label].label
+            : "Analizada"
+        }`,
+        reason: presentation?.summary ?? "",
       })
     : undefined;
   if (helpLevel === "none") return null;
@@ -798,13 +777,7 @@ export function AdvicePanel({
                   : ""}
               </strong>
             </div>
-            <p className="feedback-copy">{feedback.copy?.text}</p>
-            <p className="feedback-meta">
-              Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
-              {feedback.motif.confidence
-                ? ` · confianza ${feedback.motif.confidence}`
-                : ""}
-            </p>
+            <p className="feedback-copy">{presentation?.summary}</p>
             <div className="feedback-actions">
               <button
                 ref={detailTriggerRef}
@@ -871,10 +844,7 @@ export function AdvicePanel({
                     Cerrar
                   </button>
                 </div>
-                <p>{feedback.copy?.text}</p>
-                <p className="feedback-meta">
-                  Motivo: {motifLabels[feedback.motif.kind] ?? "posición"}
-                </p>
+                <p>{presentation?.detail}</p>
                 {displayedLine.length ? (
                   <ol className="feedback-line" aria-label="Mejor variante">
                     {displayedLine.map((move, index) => (
@@ -1091,13 +1061,32 @@ export function App() {
         ? false
         : current,
     );
+    if (activeCoachRequestId.current === identity.requestId)
+      activeCoachRequestId.current = undefined;
+  };
+  const finalizeStaleCoachAttempt = (identity: AnalysisRequestIdentity) => {
+    // A newer retry may be analyzing the same ply. Feedback does not carry a
+    // request id, so only the request currently registered as pending may
+    // transition that ply to unavailable.
+    if (coachPendingRef.current?.identity.requestId !== identity.requestId)
+      return;
+    setWorkspace((current) => finalizePendingCoachAttempt(current, identity));
+    setProvisionalMoveQuality((current) =>
+      current?.historyIndex === identity.historyIndex &&
+      current.uci === identity.uci
+        ? undefined
+        : current,
+    );
+    setRetryTarget((current) =>
+      current?.attemptRequestId === identity.requestId ? undefined : current,
+    );
+    clearPendingCoachState(identity);
   };
   const cancelPendingCoachAttempt = () => {
     const pending = coachPendingRef.current;
     if (!pending) return;
     const { identity } = pending;
-    setWorkspace((current) => finalizePendingCoachAttempt(current, identity));
-    clearPendingCoachState(identity);
+    finalizeStaleCoachAttempt(identity);
   };
   const [coachSlow, setCoachSlow] = useState(false);
   const [coachRetry, setCoachRetry] = useState(0);
@@ -1111,6 +1100,22 @@ export function App() {
   const mobileMoreCloseRef = useRef<HTMLButtonElement>(null);
   const treeWasOpenRef = useRef(false);
   const moreWasOpenRef = useRef(false);
+  useEffect(() => {
+    const pending = coachPendingRef.current;
+    if (
+      !pending ||
+      acceptsAnalysisResult(
+        workspace,
+        pending.identity,
+        pending.identity.requestId,
+      )
+    )
+      return;
+    // Promotion, fusion and a changed fork make the original request invalid.
+    // Finalize the origin only if it still exists; a deleted line has no
+    // feedback to mutate, but its transient request state must still disappear.
+    finalizeStaleCoachAttempt(pending.identity);
+  }, [coachPending, workspace]);
   useEffect(() => {
     const lineKey = `${activeLine.id}:${activeLine.fork?.lineId ?? ""}:${activeLine.fork?.ply ?? ""}`;
     if (retryLineRef.current !== undefined && retryLineRef.current !== lineKey)
@@ -1253,8 +1258,10 @@ export function App() {
             identity,
             identity.requestId,
           )
-        )
+        ) {
+          finalizeStaleCoachAttempt(identity);
           return;
+        }
         setFeedbackByPly((entries) =>
           entries.map((entry) =>
             entry.historyIndex === identity.historyIndex &&
@@ -1266,18 +1273,10 @@ export function App() {
               : entry,
           ),
         );
-        setCoachPending((current) =>
-          current?.identity.requestId === identity.requestId
-            ? undefined
-            : current,
-        );
-        if (activeCoachRequestId.current === identity.requestId)
-          activeCoachRequestId.current = undefined;
+        clearPendingCoachState(identity);
         setRetryTarget((current) =>
           clearExpiredCoachRetryTarget(current, identity),
         );
-        if (isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
-          setCoachSlow(false);
       },
       coachRemainingDelay(COACH_WATCHDOG_MS, coachPending.startedAt, now),
     );
@@ -1791,7 +1790,10 @@ export function App() {
           beforeLines: beforeResult.lines,
           afterLines: afterResult.lines,
         });
-        if (signal.aborted) return;
+        if (signal.aborted) {
+          finalizeStaleCoachAttempt(analysisIdentity);
+          return;
+        }
         failureStage = "acceptance";
         if (
           activeCoachRequestId.current !== analysisIdentity.requestId ||
@@ -1800,8 +1802,10 @@ export function App() {
             analysisIdentity,
             analysisIdentity.requestId,
           )
-        )
+        ) {
+          finalizeStaleCoachAttempt(analysisIdentity);
           return;
+        }
         setFeedbackByPly((entries) =>
           entries.map((entry) =>
             entry.historyIndex === historyIndex &&
@@ -1832,11 +1836,7 @@ export function App() {
             ? undefined
             : current,
         );
-        setCoachPending((current) =>
-          current?.identity.requestId === analysisIdentity.requestId
-            ? undefined
-            : current,
-        );
+        clearPendingCoachState(analysisIdentity);
         setRetryTarget((current) =>
           current?.historyIndex === historyIndex && current.uci === move.uci
             ? undefined
@@ -1866,11 +1866,7 @@ export function App() {
           action: failureAction,
         });
         if (failureAction === "stale") {
-          setRetryTarget((current) =>
-            current?.attemptRequestId === analysisIdentity.requestId
-              ? undefined
-              : current,
-          );
+          finalizeStaleCoachAttempt(analysisIdentity);
           return;
         }
         if (
@@ -1904,11 +1900,7 @@ export function App() {
               : entry,
           ),
         );
-        setCoachPending((current) =>
-          current?.identity.requestId === analysisIdentity.requestId
-            ? undefined
-            : current,
-        );
+        clearPendingCoachState(analysisIdentity);
         setRetryTarget((current) =>
           current?.historyIndex === historyIndex && current.uci === move.uci
             ? undefined

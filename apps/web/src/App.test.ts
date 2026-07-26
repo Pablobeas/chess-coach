@@ -23,7 +23,7 @@ import {
   coachFailureStageForPrimaryLines,
   coachRemainingDelay,
   canPlayBoard,
-  compactReadyFeedbackSummary,
+  feedbackPresentationFor,
   describeGameTurnStatus,
   initialOpponentNameForMode,
   isAbortErrorLike,
@@ -40,8 +40,15 @@ import {
   shouldReplacePendingFeedback,
   workspaceTransitionNotice,
 } from "./App";
-import { createSessionWorkspace, createTrialLine } from "./sessionWorkspace";
-import { syncActiveLineSession } from "./lineTransitions";
+import {
+  createSessionWorkspace,
+  createTrialLine,
+  promoteSessionLineAndDeleteFormerMain,
+} from "./sessionWorkspace";
+import {
+  acceptsAnalysisResult,
+  syncActiveLineSession,
+} from "./lineTransitions";
 
 describe("opponent backend labels", () => {
   it("never represents Stockfish as an exact Elo opponent", () => {
@@ -226,30 +233,175 @@ describe("coach feedback states", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("builds the compact mobile summary with only a differing best move", () => {
-    expect(
-      compactReadyFeedbackSummary({
-        playedSan: "e4",
-        classification: "excellent",
-        motif: "development",
-        playedUci: "e2e4",
-        bestUci: "d2d4",
-        bestMove: "peón d2-d4",
-      }),
-    ).toEqual({
-      title: "e4 · Excelente",
-      reason: "Motivo: desarrollo · Mejor: peón d2-d4",
+  it("uses the v3 compact and expanded wording without exposing internal engine terms", async () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const move = after.history.at(-1)!;
+    const record = {
+      schemaVersion: 3,
+      turn: {
+        ply: 1,
+        actor: "user",
+        playedUci: move.uci,
+        playedSan: move.san,
+        beforeFen: before.fen,
+        afterFen: after.fen,
+        perspective: "white",
+      },
+      evidence: {
+        before: { rank: 1, moves: [], score: { kind: "centipawns", value: 0 } },
+        after: { rank: 1, moves: [], score: { kind: "centipawns", value: 0 } },
+        perspective: "white",
+        playedUci: move.uci,
+        verifiedBestVariation: [{ uci: move.uci, san: move.san }],
+        validation: { playedMoveLegal: true, bestLineFullyLegal: true },
+      },
+      assessment: {
+        label: "excellent",
+        expectedLoss: 0,
+        expectedScoreBefore: {
+          value: 0.5,
+          source: "centipawn",
+          calibrationVersion: "centipawn-logistic-v1",
+        },
+        expectedScoreAfter: {
+          value: 0.5,
+          source: "centipawn",
+          calibrationVersion: "centipawn-logistic-v1",
+        },
+        isEstimated: true,
+        calibration: {
+          version: "expected-score-v1",
+          perspective: "white",
+          sourceBefore: "centipawn",
+          sourceAfter: "centipawn",
+        },
+        context: {
+          alreadyLost: false,
+          mateLost: false,
+          helpLevel: "normal",
+          equivalent: false,
+          missedWin: false,
+        },
+      },
+      motif: { kind: "development", detectorVersion: "motif-v2", evidence: [] },
+      explanation: {
+        mode: "explained",
+        primaryReason: {
+          kind: "slow-development",
+          confidence: "medium",
+          factRefs: [],
+        },
+        consequence: { kind: "initiative", factRefs: [] },
+        bestMovePurposes: ["develops-piece"],
+        supportingVariation: [{ uci: move.uci, san: move.san }],
+      },
+      presentation: {
+        locale: "es",
+        templateId: "test-v3",
+        summary: "Buena jugada: desarrollas una pieza.",
+        detail:
+          "Buena jugada: desarrollas una pieza y dejas preparada la salida de tus demás piezas.",
+      },
+      hints: [],
+    } as const;
+
+    expect(feedbackPresentationFor(record).summary).not.toBe(
+      feedbackPresentationFor(record).detail,
+    );
+    await act(async () => {
+      root.render(
+        createElement(AdvicePanel, {
+          feedbackEntry: {
+            historyIndex: 0,
+            uci: move.uci,
+            actor: "user",
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            status: "ready",
+            record,
+          },
+          helpLevel: "normal",
+          selectedMaia: false,
+          lineVisible: false,
+          onToggleLine: vi.fn(),
+          slow: false,
+          onRetry: vi.fn(),
+        }),
+      );
     });
-    expect(
-      compactReadyFeedbackSummary({
-        playedSan: "e4",
-        classification: "best",
-        motif: "development",
-        playedUci: "e2e4",
-        bestUci: "e2e4",
-        bestMove: "peón e2-e4",
-      }).reason,
-    ).toBe("Motivo: desarrollo");
+    expect(container.textContent).toContain(record.presentation.summary);
+    expect(container.textContent).not.toMatch(
+      /confianza|centipe[oó]n|depth|multipv|\bPV\b/iu,
+    );
+    const open = container.querySelector<HTMLButtonElement>(
+      ".feedback-detail-trigger",
+    );
+    await act(async () => open?.click());
+    expect(container.textContent).toContain(record.presentation.detail);
+  });
+
+  it("replaces contaminated legacy v2 copy with a neutral migration message", async () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const move = after.history.at(-1)!;
+    const legacy = {
+      schemaVersion: 2,
+      turn: {
+        ply: 1,
+        actor: "user",
+        playedUci: move.uci,
+        playedSan: move.san,
+        beforeFen: before.fen,
+        afterFen: after.fen,
+        perspective: "white",
+      },
+      evidence: {
+        before: { rank: 1, moves: [], score: { kind: "centipawns", value: 0 } },
+        after: { rank: 1, moves: [], score: { kind: "centipawns", value: 0 } },
+        perspective: "white",
+        playedUci: move.uci,
+        verifiedBestVariation: [],
+        validation: { playedMoveLegal: true, bestLineFullyLegal: true },
+      },
+      motif: { kind: "activity", detectorVersion: "motif-v1", evidence: [] },
+      copy: {
+        locale: "es",
+        templateId: "legacy-pv",
+        text: "La PV a profundidad 18 pierde 42 centipeones con confianza alta.",
+      },
+      hints: [],
+    } as const;
+
+    expect(feedbackPresentationFor(legacy).summary).not.toContain("PV");
+    await act(async () => {
+      root.render(
+        createElement(AdvicePanel, {
+          feedbackEntry: {
+            historyIndex: 0,
+            uci: move.uci,
+            actor: "user",
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            status: "ready",
+            record: legacy,
+          },
+          helpLevel: "normal",
+          selectedMaia: false,
+          lineVisible: false,
+          onToggleLine: vi.fn(),
+          slow: false,
+          onRetry: vi.fn(),
+        }),
+      );
+    });
+    expect(container.textContent).toContain(
+      "El análisis detallado de esta jugada no está disponible.",
+    );
+    expect(container.textContent).not.toContain(legacy.copy.text);
+    expect(container.textContent).not.toMatch(
+      /confianza|centipe[oó]n|profundidad|\bPV\b/iu,
+    );
   });
 
   it("only renders the mobile evaluation text when enabled", async () => {
@@ -574,5 +726,98 @@ describe("coach feedback states", () => {
         (line) => line.id === "main",
       )?.feedbackByPly[0]?.status,
     ).toBe("ready");
+  });
+
+  it("settles a pending origin after promotion so late results and aborts cannot keep it pending", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const entry = replayHistory(after)[0]!;
+    const identity = {
+      lineId: "trial",
+      lineRole: "trial" as const,
+      fork: { lineId: "main", ply: 1 },
+      historyIndex: 0,
+      ply: 1,
+      actor: "user" as const,
+      uci: entry.move.uci,
+      beforeFen: entry.beforeFen,
+      afterFen: entry.afterFen,
+      requestId: "promotion-pending",
+    };
+    const trial = createTrialLine(createSessionWorkspace(after), "trial");
+    const pending = {
+      ...trial,
+      lines: trial.lines.map((line) =>
+        line.id === "trial"
+          ? {
+              ...line,
+              feedbackByPly: [
+                {
+                  historyIndex: 0,
+                  uci: entry.move.uci,
+                  actor: "user" as const,
+                  beforeFen: entry.beforeFen,
+                  afterFen: entry.afterFen,
+                  status: "pending" as const,
+                },
+              ],
+            }
+          : line,
+      ),
+    };
+    const promoted = promoteSessionLineAndDeleteFormerMain(pending, "trial");
+
+    expect(acceptsAnalysisResult(promoted, identity, identity.requestId)).toBe(
+      false,
+    );
+    const settled = finalizePendingCoachAttempt(promoted, identity);
+    expect(settled.lines).toHaveLength(1);
+    expect(settled.lines[0]?.feedbackByPly[0]?.status).toBe("unavailable");
+    expect(
+      coachFailureActionForTurn({ name: "AbortError" }, true, false, 0, false),
+    ).toBe("stale");
+  });
+
+  it("never finalizes a pending entry that belongs to the other actor", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const entry = replayHistory(after)[0]!;
+    const base = createSessionWorkspace(after);
+    const identity = (actor: "user" | "maia") => ({
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      ply: 1,
+      actor,
+      uci: entry.move.uci,
+      beforeFen: entry.beforeFen,
+      afterFen: entry.afterFen,
+      requestId: `${actor}-request`,
+    });
+    const pendingFor = (actor: "user" | "maia") => ({
+      ...base,
+      lines: base.lines.map((line) => ({
+        ...line,
+        feedbackByPly: [
+          {
+            historyIndex: 0,
+            uci: entry.move.uci,
+            actor,
+            beforeFen: entry.beforeFen,
+            afterFen: entry.afterFen,
+            status: "pending" as const,
+          },
+        ],
+      })),
+    });
+
+    expect(
+      finalizePendingCoachAttempt(pendingFor("maia"), identity("user")).lines[0]
+        ?.feedbackByPly[0]?.status,
+    ).toBe("pending");
+    expect(
+      finalizePendingCoachAttempt(pendingFor("user"), identity("maia")).lines[0]
+        ?.feedbackByPly[0]?.status,
+    ).toBe("pending");
   });
 });

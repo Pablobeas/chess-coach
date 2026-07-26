@@ -9,6 +9,7 @@ import {
   analyzeMove,
   analyzeTurn,
   classifyMove,
+  decodeCoachTurnRecord,
   expectedScoreFromWdl,
   hintForLevel,
 } from "./index";
@@ -162,7 +163,7 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -80 }, ["e7e5"]),
     );
 
-    expect(record.schemaVersion).toBe(2);
+    expect(record.schemaVersion).toBe(3);
     expect(record.turn).toMatchObject({
       ply: 1,
       actor: "user",
@@ -176,9 +177,8 @@ describe("coach turn records", () => {
       "centipawn-logistic-v1",
     );
     expect(record.motif.kind).toBeDefined();
-    expect(
-      record.copy?.text.split(/[.!?](?:\s|$)/).filter(Boolean),
-    ).toHaveLength(2);
+    expect(record.presentation?.summary).not.toBe(record.presentation?.detail);
+    expect(record.presentation?.detail.split(/[.!?](?:\s|$)/).filter(Boolean).length).toBeGreaterThanOrEqual(2);
     expect(record.hints.map((hint) => hint.level)).toEqual([1, 2, 3]);
     expect(record.hints[1]?.text).toBe("Revisa el peón e2-e4.");
     expect(record.hints[2]?.text).toBe("Prueba el peón e2-e4.");
@@ -299,7 +299,58 @@ describe("coach turn records", () => {
 
     expect(record.motif.kind).toBe("hanging-piece");
     expect(record.motif.facts?.[0]?.detail).toContain("f4");
-    expect(record.copy?.text).toContain("capturable");
+    expect(record.explanation?.primaryReason.kind).toBe("left-piece-undefended");
+    expect(record.copy?.text).not.toMatch(/PV|centipawn|confidence/i);
+  });
+
+  it("does not blame a good or brilliant move for a capture merely present in the opponent PV", () => {
+    const before = loadPosition("4k3/6pp/8/6p1/8/8/4N3/4K3 w - - 0 1");
+    const after = applyMove(before, { from: "e2", to: "f4" });
+    const brilliant = analyzeTurn(
+      before,
+      after,
+      line({ kind: "centipawns", value: 30 }, ["e2f4"]),
+      line({ kind: "centipawns", value: 30 }, ["g5f4"]),
+    );
+    const good = analyzeTurn(
+      before,
+      after,
+      line({ kind: "centipawns", value: 300 }, ["e1d1"]),
+      line({ kind: "centipawns", value: 220 }, ["g5f4"]),
+    );
+
+    [brilliant, good].forEach((record) =>
+      expect(record.explanation?.primaryReason.kind).not.toMatch(
+        /left-piece-undefended|direct-material-loss|ignored-threat/,
+      ),
+    );
+    [brilliant, good].forEach((record) =>
+      expect(record.motif.kind).not.toBe("hanging-piece"),
+    );
+    expect(brilliant.assessment?.label).toBe("brilliant");
+    expect(good.assessment?.label).toBe("good");
+  });
+
+  it("does not call a favorable loss of castling rights a fault, or blame castling itself", () => {
+    const rookBefore = loadPosition("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    const rookAfter = applyMove(rookBefore, { from: "h1", to: "h2" });
+    const favorable = analyzeTurn(
+      rookBefore,
+      rookAfter,
+      line({ kind: "centipawns", value: 10 }, ["h1h2"]),
+      line({ kind: "centipawns", value: 30 }, ["e8d7"]),
+    );
+    const castleBefore = loadPosition("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    const castleAfter = applyMove(castleBefore, { from: "e1", to: "g1" });
+    const castle = analyzeTurn(
+      castleBefore,
+      castleAfter,
+      line({ kind: "centipawns", value: 100 }, ["e1g1"]),
+      line({ kind: "centipawns", value: -100 }, ["e8d7"]),
+    );
+
+    expect(favorable.explanation?.primaryReason.kind).not.toBe("lost-castling-right");
+    expect(castle.explanation?.primaryReason.kind).not.toBe("lost-castling-right");
   });
 
   it("keeps visible feedback compact while naming the verified alternative", () => {
@@ -312,9 +363,9 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -100 }, ["e7e5"]),
     );
 
-    expect(record.copy?.text).toBe(
-      "Error (estimación): Tu jugada no es la primera de la PV validada. Mejor: mover el peón e2-e4.",
-    );
+    expect(record.explanation?.primaryReason.kind).toBe("slow-development");
+    expect(record.presentation?.summary).toContain("desarrollo");
+    expect(record.presentation?.detail).toContain("peón e2-e4");
     expect(record.evidence.alternativeMove).toMatchObject({
       uci: "e2e4",
       san: "e4",
@@ -340,9 +391,8 @@ describe("coach turn records", () => {
       );
 
       expect(record.assessment?.label).toBe(label);
-      expect(record.copy?.text).toBe(
-        `${prefix} (estimación): Tu jugada no es la primera de la PV validada. Mejor: mover el peón e2-e4.`,
-      );
+      expect(record.copy?.text).not.toMatch(/PV|centipawn|confidence/i);
+      expect(record.presentation?.summary).not.toBe(record.presentation?.detail);
     });
   });
 
@@ -379,7 +429,8 @@ describe("coach turn records", () => {
 
     expect(record.assessment?.context.equivalent).toBe(true);
     expect(record.motif.kind).toBe("equivalent");
-    expect(record.copy?.text).toContain("Hay más de una continuación");
+    expect(record.explanation?.mode).toBe("equivalent");
+    expect(record.copy?.text).toContain("varias jugadas");
   });
 
   it("classifies a missed winning opportunity separately", () => {
@@ -398,9 +449,8 @@ describe("coach turn records", () => {
     );
     expect(invalidPv.evidence.bestMove).toBeUndefined();
     expect(invalidPv.copy?.text).not.toContain("a1");
-    expect(invalidPv.copy?.text).toBe(
-      "Sin una PV legal verificable, no hay una mejor jugada que mostrar (estimación).",
-    );
+    expect(invalidPv.explanation?.mode).toBe("explained");
+    expect(invalidPv.presentation?.summary).not.toContain("PV");
 
     const maia = analyzeTurn(
       before,
@@ -454,10 +504,8 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -80 }, ["e7e5"]),
     );
     expect(e4Record.copy).toEqual(repeat.copy);
-    expect(e4Record.copy?.templateId).toBe("turn-v5-inaccuracy-neutral-played");
-    expect(e4Record.copy?.text).toBe(
-      "Imprecisión (estimación): El resultado esperado empeora. La línea validada empieza con mover el peón e2-e4.",
-    );
+    expect(e4Record.copy?.templateId).toBe("turn-v6-explained-slow-development-recommendation");
+    expect(e4Record.presentation?.summary).not.toBe(e4Record.presentation?.detail);
   });
 
   it("keeps mate and already-lost copy honest about the engine evidence", () => {
@@ -476,17 +524,12 @@ describe("coach turn records", () => {
       line({ kind: "centipawns", value: -1300 }, ["e7e5"]),
     );
 
-    expect(mate.copy?.text).toBe(
-      "Error grave: La línea del motor pasa de mate favorable a desfavorable. La línea validada empieza con mover el peón e2-e4.",
-    );
-    expect(alreadyLost.copy?.text).toContain(
-      "La evaluación ya era muy desfavorable antes de mover.",
-    );
-    expect(alreadyLost.copy?.text).toContain("(estimación)");
+    expect(mate.explanation?.primaryReason.kind).toBe("allowed-mate");
+    expect(mate.copy?.text).not.toMatch(/motor|PV|centipawn/i);
+    expect(alreadyLost.explanation?.mode).toBe("recommendation-only");
+    expect(alreadyLost.copy?.text).not.toMatch(/evaluación|estimación/i);
     [mate, alreadyLost].forEach((record) =>
-      expect(
-        record.copy?.text.split(/[.!?](?:\s|$)/).filter(Boolean).length,
-      ).toBe(2),
+      expect(record.presentation?.summary).not.toBe(record.presentation?.detail),
     );
   });
 
@@ -501,8 +544,64 @@ describe("coach turn records", () => {
     );
 
     expect(feedback.evidence.playedUci).toBe("e2e4");
-    expect(feedback.record.schemaVersion).toBe(2);
+    expect(feedback.record.schemaVersion).toBe(3);
     expect(hintForLevel(feedback, 1, "guided")).toBe(feedback.hints[1]);
     expect(hintForLevel(feedback, 3, "none")).toBeUndefined();
+  });
+
+  it("keeps v2 readable without inventing a v3 explanation", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const v3 = analyzeTurn(
+      before,
+      after,
+      line({ kind: "centipawns", value: 20 }, ["e2e4"]),
+      line({ kind: "centipawns", value: -20 }, ["e7e5"]),
+    );
+    const v2 = { ...v3, schemaVersion: 2 as const };
+    delete (v2 as { explanation?: unknown }).explanation;
+    delete (v2 as { presentation?: unknown }).presentation;
+
+    const decoded = decodeCoachTurnRecord(v2);
+    expect(decoded?.schemaVersion).toBe(2);
+    expect(decoded?.explanation).toBeUndefined();
+    expect(decoded?.presentation).toBeUndefined();
+    expect(decodeCoachTurnRecord({ schemaVersion: 3 })).toBeUndefined();
+  });
+
+  it("rejects malformed v3 explanation union members", () => {
+    const before = createInitialGame();
+    const after = applyMove(before, { from: "e2", to: "e4" });
+    const record = analyzeTurn(
+      before,
+      after,
+      line({ kind: "mate", moves: 3 }, ["e2e4"]),
+      line({ kind: "mate", moves: -2 }, ["e7e5"]),
+    );
+    const valid = structuredClone(record) as unknown as Record<string, unknown>;
+    const noConsequence = structuredClone(valid) as Record<string, unknown>;
+    delete (noConsequence.explanation as Record<string, unknown>).consequence;
+    const recommendationWithConsequence = structuredClone(valid) as Record<string, unknown>;
+    recommendationWithConsequence.explanation = {
+      mode: "recommendation-only",
+      primaryReason: { kind: "unidentified", confidence: "low", factRefs: [] },
+      consequence: { kind: "mate", factRefs: [] },
+      bestMovePurposes: [],
+      supportingVariation: [],
+    };
+    const malformedFact = structuredClone(valid) as Record<string, unknown>;
+    (malformedFact.explanation as Record<string, unknown>).primaryReason = {
+      kind: "allowed-mate", confidence: "high", factRefs: [{ kind: "piece", square: "z9" }],
+    };
+    const tamperedSan = structuredClone(valid) as Record<string, unknown>;
+    (tamperedSan.explanation as Record<string, unknown>).supportingVariation = [
+      { uci: "e2e4", san: "Qxh7#" },
+    ];
+
+    expect(decodeCoachTurnRecord(valid)).toBeDefined();
+    expect(decodeCoachTurnRecord(noConsequence)).toBeUndefined();
+    expect(decodeCoachTurnRecord(recommendationWithConsequence)).toBeUndefined();
+    expect(decodeCoachTurnRecord(malformedFact)).toBeUndefined();
+    expect(decodeCoachTurnRecord(tamperedSan)).toBeUndefined();
   });
 });

@@ -3,6 +3,71 @@ import { Chess, type PieceSymbol, type Square } from "chess.js";
 export type PlayerColor = "white" | "black";
 export type PromotionPiece = "q" | "r" | "b" | "n";
 export type PieceType = PieceSymbol;
+export type BoardSquare =
+  | "a1"
+  | "a2"
+  | "a3"
+  | "a4"
+  | "a5"
+  | "a6"
+  | "a7"
+  | "a8"
+  | "b1"
+  | "b2"
+  | "b3"
+  | "b4"
+  | "b5"
+  | "b6"
+  | "b7"
+  | "b8"
+  | "c1"
+  | "c2"
+  | "c3"
+  | "c4"
+  | "c5"
+  | "c6"
+  | "c7"
+  | "c8"
+  | "d1"
+  | "d2"
+  | "d3"
+  | "d4"
+  | "d5"
+  | "d6"
+  | "d7"
+  | "d8"
+  | "e1"
+  | "e2"
+  | "e3"
+  | "e4"
+  | "e5"
+  | "e6"
+  | "e7"
+  | "e8"
+  | "f1"
+  | "f2"
+  | "f3"
+  | "f4"
+  | "f5"
+  | "f6"
+  | "f7"
+  | "f8"
+  | "g1"
+  | "g2"
+  | "g3"
+  | "g4"
+  | "g5"
+  | "g6"
+  | "g7"
+  | "g8"
+  | "h1"
+  | "h2"
+  | "h3"
+  | "h4"
+  | "h5"
+  | "h6"
+  | "h7"
+  | "h8";
 
 export interface MoveInput {
   readonly from: string;
@@ -51,10 +116,56 @@ export interface ReplayedHistoryEntry {
   readonly move: MoveRecord;
 }
 
+export interface PositionPiece {
+  readonly square: BoardSquare;
+  readonly color: PlayerColor;
+  readonly type: PieceType;
+}
+
+export interface PieceCountByType {
+  readonly p: number;
+  readonly n: number;
+  readonly b: number;
+  readonly r: number;
+  readonly q: number;
+  readonly k: number;
+}
+
+export interface MaterialCount {
+  readonly totalPieces: number;
+  readonly byType: PieceCountByType;
+}
+
+export interface MaterialSummary {
+  readonly white: MaterialCount;
+  readonly black: MaterialCount;
+}
+
+export interface SideCastlingRights {
+  readonly kingside: boolean;
+  readonly queenside: boolean;
+}
+
+export interface CastlingRights {
+  readonly white: SideCastlingRights;
+  readonly black: SideCastlingRights;
+}
+
+type MutablePieceCountByType = {
+  -readonly [Key in keyof PieceCountByType]: PieceCountByType[Key];
+};
+
 export class InvalidFenError extends Error {
   constructor(fen: string) {
     super(`Invalid FEN: ${fen}`);
     this.name = "InvalidFenError";
+  }
+}
+
+export class InvalidSquareError extends Error {
+  constructor(square: string) {
+    super(`Invalid square: ${square}`);
+    this.name = "InvalidSquareError";
   }
 }
 
@@ -86,8 +197,50 @@ function createChess(fen: string): Chess {
   }
 }
 
+function toSquare(square: string): Square {
+  if (!SQUARE_PATTERN.test(square)) {
+    throw new InvalidSquareError(square);
+  }
+
+  return square as Square;
+}
+
 function toPlayerColor(turn: "w" | "b"): PlayerColor {
   return turn === "w" ? "white" : "black";
+}
+
+function toInternalColor(color: PlayerColor): "w" | "b" {
+  return color === "white" ? "w" : "b";
+}
+
+function toPositionPiece(
+  square: string,
+  piece: { readonly color: "w" | "b"; readonly type: PieceSymbol },
+): PositionPiece {
+  return Object.freeze({
+    square: square as BoardSquare,
+    color: toPlayerColor(piece.color),
+    type: piece.type,
+  });
+}
+
+function createEmptyPieceCountByType(): MutablePieceCountByType {
+  return {
+    p: 0,
+    n: 0,
+    b: 0,
+    r: 0,
+    q: 0,
+    k: 0,
+  };
+}
+
+function freezeMaterialCount(byType: MutablePieceCountByType): MaterialCount {
+  return Object.freeze({
+    totalPieces:
+      byType.p + byType.n + byType.b + byType.r + byType.q + byType.k,
+    byType: Object.freeze({ ...byType }),
+  });
 }
 
 function toMoveRecord(move: {
@@ -335,6 +488,122 @@ export function createInitialGame(): GameSession {
 
 export function loadPosition(fen: string): GameSession {
   return createSession(createChess(fen), fen, []);
+}
+
+export function listPieces(fen: string): readonly PositionPiece[] {
+  const game = createChess(fen);
+  const pieces: PositionPiece[] = [];
+
+  for (const rank of game.board()) {
+    for (const piece of rank) {
+      if (piece === null) continue;
+      pieces.push(toPositionPiece(piece.square, piece));
+    }
+  }
+
+  return Object.freeze(pieces);
+}
+
+export function getPieceAt(
+  fen: string,
+  square: string,
+): PositionPiece | undefined {
+  const game = createChess(fen);
+  const targetSquare = toSquare(square);
+  const piece = game.get(targetSquare);
+
+  return piece === undefined
+    ? undefined
+    : toPositionPiece(targetSquare, {
+        color: piece.color,
+        type: piece.type,
+      });
+}
+
+export function listAttackers(
+  fen: string,
+  square: string,
+  color: PlayerColor,
+): readonly PositionPiece[] {
+  const game = createChess(fen);
+  const targetSquare = toSquare(square);
+
+  return Object.freeze(
+    game
+      .attackers(targetSquare, toInternalColor(color))
+      .map((attackerSquare) => {
+        const piece = game.get(attackerSquare);
+        if (piece === undefined) {
+          throw new InvalidFenError(fen);
+        }
+
+        return toPositionPiece(attackerSquare, {
+          color: piece.color,
+          type: piece.type,
+        });
+      }),
+  );
+}
+
+export function listDefenders(
+  fen: string,
+  square: string,
+): readonly PositionPiece[] {
+  const game = createChess(fen);
+  const targetSquare = toSquare(square);
+  const occupant = game.get(targetSquare);
+
+  if (occupant === undefined) {
+    return Object.freeze([]);
+  }
+
+  return Object.freeze(
+    game
+      .attackers(targetSquare, occupant.color)
+      .map((defenderSquare) => {
+        const piece = game.get(defenderSquare);
+        if (piece === undefined) {
+          throw new InvalidFenError(fen);
+        }
+
+        return toPositionPiece(defenderSquare, {
+          color: piece.color,
+          type: piece.type,
+        });
+      }),
+  );
+}
+
+export function getMaterialSummary(fen: string): MaterialSummary {
+  const white = createEmptyPieceCountByType();
+  const black = createEmptyPieceCountByType();
+
+  for (const piece of listPieces(fen)) {
+    const counts = piece.color === "white" ? white : black;
+    counts[piece.type] += 1;
+  }
+
+  return Object.freeze({
+    white: freezeMaterialCount(white),
+    black: freezeMaterialCount(black),
+  });
+}
+
+export function getCastlingRights(fen: string): CastlingRights {
+  const game = createChess(fen);
+  const white = game.getCastlingRights("w");
+  const black = game.getCastlingRights("b");
+
+  return Object.freeze({
+    white: Object.freeze({
+      kingside: white.k,
+      queenside: white.q,
+    }),
+    black: Object.freeze({
+      kingside: black.k,
+      queenside: black.q,
+    }),
+  });
 }
 
 export function restoreSession(session: GameSession): GameSession {

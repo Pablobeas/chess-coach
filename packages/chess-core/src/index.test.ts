@@ -5,11 +5,20 @@ import {
   formatMovePhrase,
   formatMoveReference,
   formatMoveSequence,
+  getCastlingRights,
+  getMaterialSummary,
+  getPieceAt,
+  InvalidFenError,
   InvalidGameSessionError,
-  listLegalMoves,
-  loadPgn,
+  InvalidSquareError,
+  listAttackers,
   listCaptures,
+  listDefenders,
+  listLegalMoves,
+  listPieces,
+  loadPgn,
   loadPosition,
+  type PositionPiece,
   replayHistory,
   restoreSession,
   sessionAtPly,
@@ -250,5 +259,119 @@ describe("chess-core", () => {
         { uci: "g1f3", san: "Nf3" },
       ]),
     ).toEqual(["Peón e2-e4", "Peón e7-e5", "Caballo g1-f3"]);
+  });
+
+  it("lists immutable pieces, occupancy and promoted material", () => {
+    const fen = "4k3/8/8/8/8/8/Q7/Q3K3 w - - 0 1";
+
+    expect(listPieces(fen)).toEqual([
+      { square: "e8", color: "black", type: "k" },
+      { square: "a2", color: "white", type: "q" },
+      { square: "a1", color: "white", type: "q" },
+      { square: "e1", color: "white", type: "k" },
+    ]);
+    expect(getPieceAt(fen, "a2")).toEqual({
+      square: "a2",
+      color: "white",
+      type: "q",
+    });
+    expect(getPieceAt(fen, "d4")).toBeUndefined();
+    expect(getMaterialSummary(fen)).toEqual({
+      white: {
+        totalPieces: 3,
+        byType: { p: 0, n: 0, b: 0, r: 0, q: 2, k: 1 },
+      },
+      black: {
+        totalPieces: 1,
+        byType: { p: 0, n: 0, b: 0, r: 0, q: 0, k: 1 },
+      },
+    });
+  });
+
+  it("lists attackers and defenders from immutable square snapshots", () => {
+    const fen = "4k3/8/4p3/3p4/2B1P3/8/8/4K3 w - - 0 1";
+
+    expect(listAttackers(fen, "d5", "white")).toEqual([
+      { square: "c4", color: "white", type: "b" },
+      { square: "e4", color: "white", type: "p" },
+    ]);
+    expect(listAttackers(fen, "e4", "black")).toEqual([
+      { square: "d5", color: "black", type: "p" },
+    ]);
+    expect(listDefenders(fen, "d5")).toEqual([
+      { square: "e6", color: "black", type: "p" },
+    ]);
+    expect(listDefenders(fen, "c3")).toEqual([]);
+  });
+
+  it("derives castling rights directly from FEN", () => {
+    expect(
+      getCastlingRights("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"),
+    ).toEqual({
+      white: { kingside: true, queenside: true },
+      black: { kingside: true, queenside: true },
+    });
+    expect(
+      getCastlingRights("r3k2r/8/8/8/8/8/8/R3K2R b Kq - 0 1"),
+    ).toEqual({
+      white: { kingside: true, queenside: false },
+      black: { kingside: false, queenside: true },
+    });
+    expect(getCastlingRights("4k3/8/8/8/8/8/8/4K3 w - - 0 1")).toEqual({
+      white: { kingside: false, queenside: false },
+      black: { kingside: false, queenside: false },
+    });
+  });
+
+  it("rejects invalid squares in position inspection helpers", () => {
+    const fen = createInitialGame().fen;
+
+    expect(() => getPieceAt(fen, "z9")).toThrow(InvalidSquareError);
+    expect(() => listAttackers(fen, "i4", "white")).toThrow(InvalidSquareError);
+    expect(() => listDefenders(fen, "aa")).toThrow(InvalidSquareError);
+  });
+
+  it("rejects invalid FEN in position inspection helpers", () => {
+    const invalidFen = "not-a-fen";
+
+    expect(() => listPieces(invalidFen)).toThrow(InvalidFenError);
+    expect(() => getMaterialSummary(invalidFen)).toThrow(InvalidFenError);
+    expect(() => getCastlingRights(invalidFen)).toThrow(InvalidFenError);
+  });
+
+  it("returns deeply frozen public inspection snapshots", () => {
+    const fen = "r3k2r/8/4p3/3p4/2B1P3/8/Q7/R3K2R w KQkq - 0 1";
+    const pieces = listPieces(fen);
+    const piece = getPieceAt(fen, "a2")!;
+    const attackers = listAttackers(fen, "d5", "white");
+    const defenders = listDefenders(fen, "d5");
+    const material = getMaterialSummary(fen);
+    const castling = getCastlingRights(fen);
+
+    expect(Object.isFrozen(pieces)).toBe(true);
+    expect(Object.isFrozen(pieces[0]!)).toBe(true);
+    expect(Object.isFrozen(piece)).toBe(true);
+    expect(Object.isFrozen(attackers)).toBe(true);
+    expect(Object.isFrozen(attackers[0]!)).toBe(true);
+    expect(Object.isFrozen(defenders)).toBe(true);
+    expect(Object.isFrozen(defenders[0]!)).toBe(true);
+    expect(Object.isFrozen(material)).toBe(true);
+    expect(Object.isFrozen(material.white)).toBe(true);
+    expect(Object.isFrozen(material.white.byType)).toBe(true);
+    expect(Object.isFrozen(castling)).toBe(true);
+    expect(Object.isFrozen(castling.white)).toBe(true);
+
+    expect(() => {
+      (pieces as unknown as PositionPiece[]).push(piece);
+    }).toThrow(TypeError);
+    expect(() => {
+      (pieces[0] as { square: string }).square = "h8";
+    }).toThrow(TypeError);
+    expect(() => {
+      (material.white.byType as { q: number }).q = 99;
+    }).toThrow(TypeError);
+    expect(() => {
+      (castling.white as { kingside: boolean }).kingside = false;
+    }).toThrow(TypeError);
   });
 });

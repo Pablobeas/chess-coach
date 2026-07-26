@@ -207,7 +207,9 @@ test.describe("mobile fixed game and coach feedback", () => {
     await installMaiaMock(page);
     await start(page);
     await playMove(page, "e2", "e4");
-    await expect(page.locator(".feedback")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(".feedback-ready")).toBeVisible({
+      timeout: 20_000,
+    });
 
     const detail = page.getByRole("button", { name: /Abrir análisis de/ });
     await expect(detail).toBeVisible();
@@ -310,7 +312,24 @@ test.describe("mobile fixed game and coach feedback", () => {
 
     const summary = page.getByRole("button", { name: /Abrir análisis de/ });
     await expect(summary).toBeVisible();
-    await expect(summary).toHaveAccessibleName(/e4.*Motivo/);
+    const summaryName = await summary.getAttribute("aria-label");
+    expect(summaryName).toMatch(
+      /e4.*(Mejor jugada|Excelente|Buena|Error|Imprecisi|Oportunidad|PosiciÃ³n)/i,
+    );
+    expect(summaryName).toMatch(
+      /(Hay varias jugadas|No hay una pÃ©rdida|amenaza|material|desarrollo|enroque|alternativa|mejora)/i,
+    );
+    expect(summaryName).not.toMatch(/PV|centipe?Ã³n|depth|multipv|confianza/i);
+    await summary.click();
+    const detailDialog = page.getByRole("dialog", { name: /An.*lisis de/ });
+    await expect(detailDialog).toBeVisible();
+    const detailText =
+      (await detailDialog.locator("p").first().textContent()) ?? "";
+    expect(detailText.length).toBeGreaterThan(0);
+    expect(detailText).not.toBe(summaryName);
+    expect(detailText).not.toMatch(/PV|centipe?Ã³n|depth|multipv|confianza/i);
+    await page.keyboard.press("Escape");
+    await expect(detailDialog).toHaveCount(0);
     const metrics = await page.evaluate(() => {
       const viewportHeight =
         window.visualViewport?.height ?? window.innerHeight;
@@ -400,9 +419,12 @@ test.describe("mobile fixed game and coach feedback", () => {
     expect(metrics.boardWidth).toBeGreaterThanOrEqual(280);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
     await summary.click();
-    await expect(
-      page.getByRole("dialog", { name: /Análisis de/ }),
-    ).toContainText(fullCopy);
+    const detailDialog = page.getByRole("dialog");
+    const detailCopy =
+      (await detailDialog.locator("p").first().textContent()) ?? "";
+    expect(detailCopy.length).toBeGreaterThan(0);
+    expect(detailCopy).not.toBe(fullCopy);
+    expect(detailCopy).toMatch(/e2-e4|mover/i);
   });
 
   test("a reduced Safari visual viewport keeps the game controls in view", async ({

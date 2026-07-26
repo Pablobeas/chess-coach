@@ -29,7 +29,7 @@ de evidencia; el entrenador interpreta esa evidencia.
 - Ver siempre las piezas del usuario en la zona inferior del tablero, tambiÃ©n al
   jugar con negras, sin demoras artificiales despuÃ©s de que Maia elija su jugada.
 - Pausar, reanudar, deshacer y abandonar.
-- Feedback tras la jugada con evidencia estructurada.
+- Feedback contextual tras la jugada con evidencia estructurada y texto breve.
 - Voz cercana y serena, con consecuencia, mejor alternativa y lÃ³gica verificables.
 - Historial analÃ­tico: evaluaciÃ³n de ambos bandos e icono de calidad solo del usuario.
 - Pistas en tres niveles: objetivo, zona/pieza y movimiento.
@@ -60,6 +60,10 @@ de evidencia; el entrenador interpreta esa evidencia.
 El usuario debe poder distinguir siempre entre dato del motor, interpretaciÃ³n del
 entrenador y consejo opcional. Nunca se mostrarÃ¡ un porcentaje sin una definiciÃ³n
 visible y una calibraciÃ³n documentada.
+
+La explicación visible debe ser compacta y concreta: decir qué pasó, por qué importa
+y cuál es la mejor jugada, sin mostrar términos internos ni reutilizar la PV como
+texto de interfaz.
 
 ## PolÃ­tica de servicios externos
 

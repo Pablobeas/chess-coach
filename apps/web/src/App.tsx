@@ -904,7 +904,36 @@ function applyEngineLine(current: GameSession, uci: string): GameSession {
   return playUciMove(current, uci);
 }
 
+/**
+ * Safari can report a layout viewport behind its browser controls while the
+ * visual viewport is shorter. Keep the mobile shell tied to the latter; CSS
+ * retains 100dvh as its no-JavaScript fallback.
+ */
+export function bindVisualViewportHeight(
+  windowRef: Window = window,
+  documentRef: Document = document,
+): () => void {
+  const sync = () => {
+    const height = windowRef.visualViewport?.height ?? windowRef.innerHeight;
+    documentRef.documentElement.style.setProperty(
+      "--app-viewport-height",
+      `${Math.round(height)}px`,
+    );
+  };
+  const visualViewport = windowRef.visualViewport;
+  sync();
+  windowRef.addEventListener("resize", sync, { passive: true });
+  visualViewport?.addEventListener("resize", sync, { passive: true });
+  visualViewport?.addEventListener("scroll", sync, { passive: true });
+  return () => {
+    windowRef.removeEventListener("resize", sync);
+    visualViewport?.removeEventListener("resize", sync);
+    visualViewport?.removeEventListener("scroll", sync);
+  };
+}
+
 export function App() {
+  useEffect(() => bindVisualViewportHeight(), []);
   const recovered = useMemo(getRecoveredState, []);
   const [started, setStarted] = useState(() => recovered !== null);
   const [hasSavedGame, setHasSavedGame] = useState(() => recovered !== null);

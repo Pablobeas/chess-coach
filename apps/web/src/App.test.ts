@@ -15,6 +15,7 @@ import {
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
+  bindVisualViewportHeight,
   clearExpiredCoachRetryTarget,
   coachDebugEnabled,
   coachFailureAction,
@@ -65,6 +66,24 @@ describe("opponent backend labels", () => {
     // A fetched version.json is deliberately not an input to this reader:
     // N+1 stays an available update until the active controller changes.
     expect(readCurrentBuildId()).not.toBe("build-n1");
+  });
+});
+
+describe("mobile visual viewport", () => {
+  it("uses the visual viewport height when Safari browser chrome reduces it", () => {
+    const visualViewport = Object.assign(new EventTarget(), { height: 711 });
+    const windowRef = {
+      innerHeight: 844,
+      visualViewport,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as Window;
+
+    const cleanup = bindVisualViewportHeight(windowRef, document);
+    expect(
+      document.documentElement.style.getPropertyValue("--app-viewport-height"),
+    ).toBe("711px");
+    cleanup();
   });
 });
 

@@ -239,4 +239,108 @@ test.describe("mobile fixed game and coach feedback", () => {
     expect(metrics.boardWidth).toBeGreaterThanOrEqual(280);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth + 1);
   });
+
+  test("a reduced Safari visual viewport keeps the game controls in view", async ({
+    page,
+  }) => {
+    test.skip(
+      (test.info().project.use.viewport as { width?: number } | undefined)
+        ?.width !== 390,
+      "The Safari browser-chrome regression targets a 390px phone",
+    );
+    await start(page);
+    await page.setViewportSize({ width: 390, height: 710 });
+    await page.evaluate(() =>
+      window.visualViewport?.dispatchEvent(new Event("resize")),
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.documentElement.style.getPropertyValue(
+            "--app-viewport-height",
+          ),
+        ),
+      )
+      .toBe("710px");
+
+    const metrics = await page.evaluate(() => {
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const required = [
+        ".game-header",
+        ".mobile-evaluation",
+        ".feedback",
+        ".board",
+        ".mobile-tree-toggle",
+        ".history-controls",
+        ".pause-button",
+        ".mobile-more-toggle",
+      ].map((selector) => {
+        const element = document.querySelector<HTMLElement>(selector);
+        const rect = element?.getBoundingClientRect();
+        return {
+          selector,
+          visible: Boolean(rect && rect.width > 0 && rect.height > 0),
+          top: rect?.top ?? Number.POSITIVE_INFINITY,
+          bottom: rect?.bottom ?? Number.NEGATIVE_INFINITY,
+        };
+      });
+      return {
+        viewportHeight,
+        scrollHeight: document.documentElement.scrollHeight,
+        required,
+      };
+    });
+
+    expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+    for (const control of metrics.required) {
+      expect(control.visible, control.selector).toBe(true);
+      expect(control.top, control.selector).toBeGreaterThanOrEqual(0);
+      expect(control.bottom, control.selector).toBeLessThanOrEqual(
+        metrics.viewportHeight + 1,
+      );
+    }
+  });
+
+  test("short mobile viewports retain every control through document scroll", async ({
+    page,
+  }) => {
+    const viewport = test.info().project.use.viewport as
+      | { width?: number; height?: number }
+      | undefined;
+    test.skip(
+      !viewport?.height || viewport.height > 620,
+      "This regression covers the documented short-height fallback",
+    );
+    await start(page);
+
+    const selectors = [
+      ".game-header",
+      ".feedback",
+      ".board",
+      ".mobile-tree-toggle",
+      ".history-controls",
+      ".pause-button",
+      ".mobile-more-toggle",
+    ];
+    const before = await page.evaluate(() => ({
+      viewportHeight: window.visualViewport?.height ?? window.innerHeight,
+      scrollHeight: document.documentElement.scrollHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    }));
+    // Portrait 320×568 needs scrolling; landscape can fit its two-column
+    // fallback without it. In both cases content must never be clipped.
+    expect(before.scrollHeight).toBeGreaterThanOrEqual(before.viewportHeight);
+    expect(before.scrollWidth).toBeLessThanOrEqual(before.innerWidth + 1);
+
+    for (const selector of selectors) {
+      const rect = await page.locator(selector).evaluate((element) => {
+        element.scrollIntoView({ block: "nearest" });
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      });
+      expect(rect.width, selector).toBeGreaterThan(0);
+      expect(rect.height, selector).toBeGreaterThan(0);
+    }
+  });
 });

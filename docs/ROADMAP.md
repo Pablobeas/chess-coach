@@ -40,7 +40,8 @@
 ## Fase 4 — Preparación pública (en progreso)
 
 - [x] Base PWA instalable y service worker.
-- [ ] Espejo público privado→público automatizado con Pages, build:pages y rollback trazable.
+- [x] Espejo público privado→público automatizado con Pages y build:pages verificado.
+- [ ] Drill de rollback trazable para el espejo público.
 - [ ] E2E móvil/escritorio y perfil de rendimiento.
 - [x] Layout responsive validado en viewport móvil y escritorio.
 - [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.

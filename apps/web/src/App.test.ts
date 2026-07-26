@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
-import { loadPgn, loadPosition } from "@chess-coach/chess-core";
+import { applyMove, createInitialGame, loadPgn, loadPosition } from "@chess-coach/chess-core";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   GameTurnStatus,
   browserOpponentModeForBuild,
+  canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
   opponentNameForBackend,
   readCurrentBuildId,
+  workspaceTransitionNotice,
 } from "./App";
+import { createSessionWorkspace, createTrialLine } from "./sessionWorkspace";
+import { syncActiveLineSession } from "./lineTransitions";
 
 describe("opponent backend labels", () => {
   it("never represents Stockfish as an exact Elo opponent", () => {
@@ -90,5 +94,33 @@ describe("terminal turn status", () => {
     expect(status?.textContent).toContain("Empate");
     expect(status?.textContent).toContain("Tú juegas con negras");
     expect(status?.textContent).not.toContain("Turno de");
+  });
+});
+
+describe("workspace transition announcements", () => {
+  it("announces automatic promotion after an opponent response", () => {
+    const initial = createInitialGame();
+    const trial = createTrialLine(createSessionWorkspace(initial), "variation-1");
+    const d4 = applyMove(initial, { from: "d2", to: "d4" });
+    const d4d5 = applyMove(d4, { from: "d7", to: "d5" });
+    const promoted = syncActiveLineSession(trial, d4d5);
+    expect(workspaceTransitionNotice(trial, promoted)).toContain("promovió");
+  });
+
+  it("announces a merge and automatic pruning", () => {
+    const initial = createSessionWorkspace(createInitialGame());
+    const first = createTrialLine(initial, "v1");
+    const merged = { ...first, activeLineId: "main", lines: first.lines.filter((line) => line.id !== "v1") };
+    expect(workspaceTransitionNotice(first, merged)).toContain("fusionó");
+    const pruned = { ...first, lines: first.lines.slice(0, 1) };
+    expect(workspaceTransitionNotice(first, pruned)).toContain("eliminó automáticamente");
+  });
+});
+
+describe("historical board interaction", () => {
+  it("keeps a historical player-turn position playable when only browsing", () => {
+    expect(canPlayBoard(false, false, "white", "white")).toBe(true);
+    expect(canPlayBoard(true, false, "white", "white")).toBe(false);
+    expect(canPlayBoard(false, false, "black", "white")).toBe(false);
   });
 });

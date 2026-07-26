@@ -1,7 +1,6 @@
 import {
   applyMove,
   createInitialGame,
-  listLegalMoves,
 } from "@chess-coach/chess-core";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,6 +8,7 @@ import {
   acceptsAnalysisResult,
   continueMoveFromCursor,
   clearProvisionalForLineChange,
+  syncActiveLineSession,
   exportSessionForWorkspace,
 } from "./lineTransitions";
 import {
@@ -17,12 +17,36 @@ import {
   deleteSessionLine,
   navigateSessionLine,
   promoteSessionLine,
-  shouldPromptPromotion,
   selectSessionLine,
   updateActiveSessionLine,
 } from "./sessionWorkspace";
 
 describe("line transitions", () => {
+  it("merges an identical historical continuation but keeps a divergent reply", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e5 = applyMove(e4, { from: "e7", to: "e5" });
+    let workspace = navigateSessionLine(createSessionWorkspace(e5), 1);
+    const identical = continueMoveFromCursor(
+      workspace,
+      "e7",
+      "e5",
+      e5,
+      "trial-2",
+    );
+    expect(identical.kind).toBe("replay");
+    workspace = identical.workspace;
+    const d5 = applyMove(e4, { from: "d7", to: "d5" });
+    const divergent = continueMoveFromCursor(
+      navigateSessionLine(workspace, 1),
+      "d7",
+      "d5",
+      d5,
+      "trial-3",
+    );
+    expect(divergent.kind).toBe("fork");
+    expect(divergent.workspace.lines.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("replays an exact continuation and forks a different continuation", () => {
     const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
     const atStart = navigateSessionLine(createSessionWorkspace(e4), 0);
@@ -63,8 +87,10 @@ describe("line transitions", () => {
         },
       ],
     }));
-    expect(normalUpdate.lines[0]?.revision).toBeGreaterThan(identity.revision);
+    expect(normalUpdate.lines[0]?.revision).toBeGreaterThan(identity.lineRevision);
     expect(acceptsAnalysisResult(normalUpdate, identity, "coach-1")).toBe(true);
+    const stale = navigateSessionLine(normalUpdate, 0);
+    expect(acceptsAnalysisResult(stale, identity, "coach-1")).toBe(false);
     expect(acceptsAnalysisResult(normalUpdate, identity, "coach-2")).toBe(
       false,
     );
@@ -102,20 +128,95 @@ describe("line transitions", () => {
     }
   });
 
-  it("prompts once when a trial is four plies beyond its fork", () => {
-    let workspace = createTrialLine(
-      createSessionWorkspace(createInitialGame()),
+  it("merges an identical user and opponent continuation while preserving distinct replies", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e4c5 = applyMove(e4, { from: "c7", to: "c5" });
+    const e4e5 = applyMove(e4, { from: "e7", to: "e5" });
+
+    let workspace = navigateSessionLine(createSessionWorkspace(e4), 1);
+    workspace = updateActiveSessionLine(
+      createTrialLine(workspace, "trial-1"),
+      (line) => ({
+        ...line,
+        timeline: { session: e4c5, cursor: 2 },
+      }),
+    );
+    workspace = navigateSessionLine(selectSessionLine(workspace, "main"), 1);
+    workspace = updateActiveSessionLine(
+      createTrialLine(workspace, "trial-2"),
+      (line) => ({
+        ...line,
+        timeline: { session: e4, cursor: 1 },
+      }),
+    );
+
+    const merged = syncActiveLineSession(workspace, e4c5);
+    expect(merged.lines).toHaveLength(2);
+    expect(merged.activeLineId).toBe("trial-1");
+    expect(merged.lines.find((line) => line.id === "trial-2")).toBeUndefined();
+
+    const base = updateActiveSessionLine(
+      createTrialLine(navigateSessionLine(selectSessionLine(merged, "main"), 1), "trial-3"),
+      (line) => ({
+        ...line,
+        timeline: { session: e4, cursor: 1 },
+      }),
+    );
+    const distinct = syncActiveLineSession(base, e4e5);
+    expect(distinct.lines).toHaveLength(3);
+    expect(distinct.activeLineId).toBe("trial-3");
+    expect(exportSessionForWorkspace(distinct).history[0]?.uci).toBe("e2e4");
+  });
+
+  it("keeps a trial when it is not yet two plies beyond the current main from the same fork", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e4e5 = applyMove(e4, { from: "e7", to: "e5" });
+    const d4 = applyMove(createInitialGame(), { from: "d2", to: "d4" });
+    const d4d5 = applyMove(d4, { from: "d7", to: "d5" });
+    const d4d5c4 = applyMove(d4d5, { from: "c2", to: "c4" });
+    const d4d5c4c6 = applyMove(d4d5c4, { from: "c7", to: "c6" });
+    const workspace = createTrialLine(
+      navigateSessionLine(createSessionWorkspace(e4e5), 0),
       "trial-1",
     );
-    let session = createInitialGame();
-    for (let index = 0; index < 4; index += 1) {
-      const move = listLegalMoves(session.fen)[0]!;
-      session = applyMove(session, move);
-    }
-    workspace = updateActiveSessionLine(workspace, (line) => ({
-      ...line,
-      timeline: { session, cursor: session.history.length },
-    }));
-    expect(shouldPromptPromotion(workspace)).toBe(true);
+
+    const trial = syncActiveLineSession(workspace, d4d5);
+    expect(trial.mainLineId).toBe("main");
+    expect(trial.lines).toHaveLength(2);
+    expect(trial.activeLineId).toBe("trial-1");
+
+    const promoted = syncActiveLineSession(trial, d4d5c4c6);
+    expect(promoted.mainLineId).toBe("trial-1");
+    expect(promoted.lines).toHaveLength(1);
+    expect(exportSessionForWorkspace(promoted).history.map((move) => move.uci)).toEqual([
+      "d2d4",
+      "d7d5",
+      "c2c4",
+      "c7c6",
+    ]);
+  });
+
+  it("auto-promotes a terminal trial immediately even when it is not two plies beyond main", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e4e5 = applyMove(e4, { from: "e7", to: "e5" });
+    const e4e5nf3 = applyMove(e4e5, { from: "g1", to: "f3" });
+    const f3 = applyMove(createInitialGame(), { from: "f2", to: "f3" });
+    const f3e5 = applyMove(f3, { from: "e7", to: "e5" });
+    const f3e5g4 = applyMove(f3e5, { from: "g2", to: "g4" });
+    const mate = applyMove(f3e5g4, { from: "d8", to: "h4" });
+    const workspace = createTrialLine(
+      navigateSessionLine(createSessionWorkspace(e4e5nf3), 0),
+      "trial-1",
+    );
+
+    const promoted = syncActiveLineSession(workspace, mate);
+    expect(promoted.mainLineId).toBe("trial-1");
+    expect(promoted.lines).toHaveLength(1);
+    expect(exportSessionForWorkspace(promoted).history.map((move) => move.uci)).toEqual([
+      "f2f3",
+      "e7e5",
+      "g2g4",
+      "d8h4",
+    ]);
   });
 });

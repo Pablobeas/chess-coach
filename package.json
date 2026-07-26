@@ -18,9 +18,11 @@
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test:e2e": "playwright test",
     "codex:doctor": "codex doctor"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "prettier": "3.9.5",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

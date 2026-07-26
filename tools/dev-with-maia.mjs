@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -33,6 +33,10 @@ function sleep(milliseconds) {
 
 function normalizeErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function quotePowerShellSingle(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 async function isPortAvailable(port, host = HOST) {
@@ -74,7 +78,10 @@ export function parseViteDevServerUrl(line) {
 
 export function createViteSpawnSpec({
   platform = process.platform,
-  pnpmCommand = platform === "win32" ? "pnpm.cmd" : "pnpm",
+  pnpmCommand,
+  pnpmArgs,
+  nodeExecutablePath = process.execPath,
+  corepackExists = existsSync,
   host = HOST,
   port,
 } = {}) {
@@ -92,19 +99,42 @@ export function createViteSpawnSpec({
   ];
 
   if (platform === "win32") {
-    const shell = process.env.ComSpec ?? "cmd.exe";
-    const commandLine = [pnpmCommand, ...viteArgs]
-      .map((value) => (/\s/.test(value) ? `"${value}"` : value))
-      .join(" ");
+    const windowsPnpm =
+      pnpmCommand === undefined
+        ? (() => {
+            const corepackCommand = join(
+              dirname(nodeExecutablePath),
+              "corepack.cmd",
+            );
+            if (corepackExists(corepackCommand)) {
+              return {
+                command: corepackCommand,
+                args: ["pnpm"],
+              };
+            }
+            return {
+              command: "pnpm.cmd",
+              args: [],
+            };
+          })()
+        : {
+            command: pnpmCommand,
+            args: pnpmArgs ?? [],
+          };
+    const commandLine = `& ${quotePowerShellSingle(
+      windowsPnpm.command,
+    )} ${[...windowsPnpm.args, ...viteArgs]
+      .map((value) => quotePowerShellSingle(value))
+      .join(" ")}`;
     return {
-      command: shell,
-      args: ["/d", "/s", "/c", commandLine],
+      command: powershellCommand(platform),
+      args: ["-NoProfile", "-Command", commandLine],
     };
   }
 
   return {
-    command: pnpmCommand,
-    args: viteArgs,
+    command: pnpmCommand ?? "pnpm",
+    args: [...(pnpmArgs ?? []), ...viteArgs],
   };
 }
 
@@ -242,8 +272,8 @@ export function createChildCleanup({
   };
 }
 
-function powershellCommand() {
-  return process.platform === "win32" ? "powershell.exe" : "pwsh";
+function powershellCommand(platform = process.platform) {
+  return platform === "win32" ? "powershell.exe" : "pwsh";
 }
 
 async function runSetupScript(

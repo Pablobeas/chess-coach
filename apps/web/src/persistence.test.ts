@@ -12,6 +12,16 @@ import {
   loadStoredGame,
   saveStoredGame,
 } from "./persistence";
+import { exportSessionForWorkspace } from "./lineTransitions";
+import {
+  activeSessionLine,
+  createSessionWorkspace,
+  createTrialLine,
+  navigateSessionLine,
+  promoteSessionLineAndDeleteFormerMain,
+  selectSessionLine,
+  updateActiveSessionLine,
+} from "./sessionWorkspace";
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -65,6 +75,80 @@ function sessionWithPlies(count: number) {
     session = applyMove(session, move);
   }
   return session;
+}
+
+const afterE4 = () => applyMove(createInitialGame(), { from: "e2", to: "e4" });
+const afterE4E5 = () => applyMove(afterE4(), { from: "e7", to: "e5" });
+const afterE4E5Bc4 = () => applyMove(afterE4E5(), { from: "f1", to: "c4" });
+const afterE4E5Bc4Nf6 = () =>
+  applyMove(afterE4E5Bc4(), { from: "g8", to: "f6" });
+const afterE4E5Nf3 = () => applyMove(afterE4E5(), { from: "g1", to: "f3" });
+
+function buildVariantWorkspace() {
+  let workspace = navigateSessionLine(createSessionWorkspace(afterE4E5()), 2);
+  workspace = updateActiveSessionLine(
+    createTrialLine(workspace, "trial-a"),
+    (line) => ({
+      ...line,
+      timeline: { session: afterE4E5Bc4(), cursor: 2 },
+      annotations: [{ historyIndex: 2, uci: "f1c4", label: "good" }],
+    }),
+  );
+  workspace = updateActiveSessionLine(
+    createTrialLine(workspace, "trial-b"),
+    (line) => ({
+      ...line,
+      timeline: { session: afterE4E5Bc4Nf6(), cursor: 3 },
+      feedbackByPly: [
+        {
+          historyIndex: 2,
+          uci: "f1c4",
+          actor: "user",
+          beforeFen: afterE4E5().fen,
+          afterFen: afterE4E5Bc4().fen,
+          status: "pending",
+        },
+        {
+          historyIndex: 3,
+          uci: "g8f6",
+          actor: "maia",
+          beforeFen: afterE4E5Bc4().fen,
+          afterFen: afterE4E5Bc4Nf6().fen,
+          status: "ready",
+          record: recordFor(afterE4E5Bc4(), afterE4E5Bc4Nf6(), "maia"),
+        },
+      ],
+    }),
+  );
+  workspace = navigateSessionLine(selectSessionLine(workspace, "main"), 2);
+  workspace = updateActiveSessionLine(
+    createTrialLine(workspace, "trial-c"),
+    (line) => ({
+      ...line,
+      timeline: { session: afterE4E5Nf3(), cursor: 1 },
+      annotations: [{ historyIndex: 2, uci: "g1f3", label: "excellent" }],
+    }),
+  );
+  workspace = promoteSessionLineAndDeleteFormerMain(workspace, "trial-a");
+  return selectSessionLine(workspace, "trial-b");
+}
+
+function addLegacyRecovery(
+  storage: Storage,
+  recovery: {
+    session: ReturnType<typeof createInitialGame>;
+    cursor: number;
+    annotations: unknown[];
+    feedbackByPly: unknown[];
+  },
+  version = 6,
+) {
+  const stored = JSON.parse(
+    storage.getItem("chess-coach:active-game:v1") ?? "{}",
+  ) as Record<string, unknown>;
+  stored.version = version;
+  stored.recovery = recovery;
+  storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
 }
 
 describe("local persistence", () => {
@@ -137,28 +221,81 @@ describe("local persistence", () => {
     });
   });
 
-  it("round-trips the one-level recovery snapshot", () => {
+  it("migrates a legacy recovery snapshot into a normal trial line", () => {
     const storage = memoryStorage();
     const first = applyMove(createInitialGame(), { from: "e2", to: "e4" });
     const session = applyMove(first, { from: "e7", to: "e5" });
-    saveStoredGame(first, DEFAULT_SETTINGS, storage, [], [], 1, {
+    saveStoredGame(first, DEFAULT_SETTINGS, storage, [], [], 1);
+    addLegacyRecovery(storage, {
       session,
       cursor: 1,
       annotations: [],
       feedbackByPly: [],
     });
 
-    expect(loadStoredGame(storage)?.recovery).toMatchObject({
-      cursor: 1,
-      session: { history: [{ uci: "e2e4" }, { uci: "e7e5" }] },
-      annotations: [],
-      feedbackByPly: [],
-    });
-    expect(loadStoredGame(storage)?.workspace).toMatchObject({
+    const loaded = loadStoredGame(storage);
+    expect(loaded?.workspace).toMatchObject({
       version: 6,
       mainLineId: "main",
       activeLineId: "trial-1",
     });
+    expect(loaded?.workspace.lines.map((line) => line.id)).toEqual([
+      "main",
+      "trial-1",
+    ]);
+    expect(loaded?.workspace.lines[1]).toMatchObject({
+      timeline: { cursor: 1, session: { history: [{ uci: "e2e4" }, { uci: "e7e5" }] } },
+      fork: { lineId: "main", ply: 1 },
+      annotations: [],
+      feedbackByPly: [],
+    });
+    expect(JSON.parse(storage.getItem("chess-coach:active-game:v1") ?? "{}")).toHaveProperty(
+      "recovery",
+    );
+  });
+
+  it("round-trips a promoted workspace with line order, forks, cursors and isolated feedback", () => {
+    const storage = memoryStorage();
+    const workspace = buildVariantWorkspace();
+
+    saveStoredGame(workspace, DEFAULT_SETTINGS, storage);
+
+    const restored = loadStoredGame(storage);
+    expect(restored).not.toBeNull();
+    expect(restored?.workspace.mainLineId).toBe("trial-a");
+    expect(restored?.workspace.activeLineId).toBe("trial-b");
+    expect(restored?.workspace.lines.map((line) => line.id)).toEqual([
+      "trial-a",
+      "trial-b",
+      "trial-c",
+    ]);
+    expect(restored?.workspace.lines.map((line) => line.timeline.cursor)).toEqual(
+      [2, 3, 1],
+    );
+    expect(
+      restored?.workspace.lines.map((line) => line.fork ?? null),
+    ).toEqual([
+      null,
+      { lineId: "trial-a", ply: 2 },
+      { lineId: "trial-a", ply: 2 },
+    ]);
+    expect(restored?.workspace.lines[1]?.feedbackByPly.map((entry) => entry.status)).toEqual(
+      ["unavailable", "ready"],
+    );
+    expect(restored?.workspace.lines[0]?.feedbackByPly).toEqual([]);
+    expect(restored?.session.history.map((move) => move.uci)).toEqual([
+      "e2e4",
+      "e7e5",
+      "f1c4",
+    ]);
+    expect(restored?.cursor).toBe(2);
+
+    const navigated = navigateSessionLine(restored!.workspace, 2);
+    expect(activeSessionLine(navigated).id).toBe("trial-b");
+    expect(activeSessionLine(navigated).timeline.cursor).toBe(2);
+    expect(exportSessionForWorkspace(navigated).history.map((move) => move.uci)).toEqual(
+      ["e2e4", "e7e5", "f1c4"],
+    );
   });
 
   it("rejects a corrupt trial without replacing a valid main line", () => {
@@ -176,15 +313,63 @@ describe("local persistence", () => {
     expect(loadStoredGame(storage)?.workspace.lines).toHaveLength(1);
   });
 
-  it("rejects a recovery snapshot with an invalid cursor", () => {
+  it("skips orphaned and cyclic lines while preserving a valid main workspace", () => {
+    const storage = memoryStorage();
+    saveStoredGame(buildVariantWorkspace(), DEFAULT_SETTINGS, storage);
+    const stored = JSON.parse(
+      storage.getItem("chess-coach:active-game:v1") ?? "{}",
+    ) as {
+      workspace: {
+        activeLineId: string;
+        lines: Array<Record<string, unknown>>;
+      };
+    };
+    const [main, child, sibling] = stored.workspace.lines;
+    stored.workspace.activeLineId = "trial-orphan";
+    stored.workspace.lines = [
+      child!,
+      {
+        ...main!,
+        id: "trial-cycle-a",
+        fork: { lineId: "trial-cycle-b", ply: 2 },
+      },
+      {
+        ...sibling!,
+        id: "trial-cycle-b",
+        fork: { lineId: "trial-cycle-a", ply: 2 },
+      },
+      {
+        ...sibling!,
+        id: "trial-orphan",
+        fork: { lineId: "missing-parent", ply: 2 },
+      },
+      main!,
+    ];
+    storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
+
+    const restored = loadStoredGame(storage);
+    expect(restored).not.toBeNull();
+    expect(restored?.workspace.mainLineId).toBe("trial-a");
+    expect(restored?.workspace.activeLineId).toBe("trial-a");
+    expect(restored?.workspace.lines.map((line) => line.id)).toEqual([
+      "trial-b",
+      "trial-a",
+    ]);
+    expect(restored?.workspace.lines.find((line) => line.id === "trial-b")?.fork).toEqual(
+      { lineId: "trial-a", ply: 2 },
+    );
+  });
+
+  it("rejects a legacy recovery snapshot with an invalid cursor", () => {
     const storage = memoryStorage();
     const session = applyMove(createInitialGame(), { from: "e2", to: "e4" });
-    saveStoredGame(session, DEFAULT_SETTINGS, storage, [], [], 1, {
+    saveStoredGame(session, DEFAULT_SETTINGS, storage, [], [], 1);
+    addLegacyRecovery(storage, {
       session,
       cursor: 1,
       annotations: [],
       feedbackByPly: [],
-    });
+    }, 5);
     const stored = JSON.parse(
       storage.getItem("chess-coach:active-game:v1") ?? "{}",
     ) as { recovery: { cursor: number } };
@@ -192,6 +377,15 @@ describe("local persistence", () => {
     storage.setItem("chess-coach:active-game:v1", JSON.stringify(stored));
 
     expect(loadStoredGame(storage)).toBeNull();
+  });
+
+  it("does not write the retired recovery field in new saves", () => {
+    const storage = memoryStorage();
+    saveStoredGame(buildVariantWorkspace(), DEFAULT_SETTINGS, storage);
+
+    expect(
+      JSON.parse(storage.getItem("chess-coach:active-game:v1") ?? "{}"),
+    ).not.toHaveProperty("recovery");
   });
 
   it("persists structured records for both user and Maia plies", () => {

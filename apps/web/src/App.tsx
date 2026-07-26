@@ -1,6 +1,5 @@
 import {
   createInitialGame,
-  formatMoveReference,
   formatMoveSequence,
   loadPgn,
   listCaptures,
@@ -14,7 +13,6 @@ import {
   type AnalysisResult,
   type ChessEngine,
   type OpponentEngine,
-  type EngineScore,
 } from "@chess-coach/engine";
 import {
   assessTurn,
@@ -48,7 +46,6 @@ import {
   waitForDelay,
 } from "./gameInteractions";
 import { PieceIcon } from "./PieceIcon";
-import { groupMoveHistory, type HistoryPly } from "./moveHistory";
 import {
   boardForFen,
   createLocalGame,
@@ -77,11 +74,7 @@ import {
   visibleMoveQualityAnnotations,
 } from "./progressiveMoveQuality";
 import { createSerialTaskQueue } from "./serialTaskQueue";
-import {
-  AlternativePreparationBar,
-  PromotionSuggestion,
-  WorkspaceLinePanel,
-} from "./SessionWorkspaceControls";
+import { VariationHistory } from "./VariationHistory";
 import {
   createNavigationTimeline,
   moveNavigationCursor,
@@ -93,20 +86,17 @@ import {
   createSessionWorkspace,
   createTrialLine,
   deleteSessionLine,
-  dismissPromotionPrompt,
   navigateSessionLine,
-  promoteSessionLine,
   selectSessionLine,
-  shouldPromptPromotion,
   updateActiveSessionLine,
   type SessionWorkspace,
 } from "./sessionWorkspace";
 import {
   acceptsAnalysisResult,
-  continueMoveFromCursor,
   clearProvisionalForLineChange,
   createAnalysisRequestIdentity,
   exportSessionForWorkspace,
+  syncActiveLineSession,
 } from "./lineTransitions";
 import {
   activateWaitingServiceWorker,
@@ -161,6 +151,28 @@ export function describeGameTurnStatus(
     boardLabel: `turno de ${sideToMove}`,
     terminal: false,
   };
+}
+
+export function workspaceTransitionNotice(
+  previous: SessionWorkspace,
+  next: SessionWorkspace,
+): string {
+  if (next.mainLineId !== previous.mainLineId)
+    return "La variante se promovió a principal.";
+  if (next.activeLineId !== previous.activeLineId && next.lines.length <= previous.lines.length)
+    return "La continuación se fusionó con una variante existente.";
+  if (next.lines.length < previous.lines.length)
+    return "Se eliminó automáticamente la variante más antigua.";
+  return "";
+}
+
+export function canPlayBoard(
+  manuallyPaused: boolean,
+  engineThinking: boolean,
+  sideToMove: PlayerColor,
+  playerColor: PlayerColor,
+): boolean {
+  return !manuallyPaused && !engineThinking && sideToMove === playerColor;
 }
 
 export function GameTurnStatus({
@@ -220,13 +232,6 @@ const qualityMeta: Record<
 };
 
 const capturedTypeOrder = ["q", "r", "b", "n", "p", "k"] as const;
-function formatEvaluation(score: EngineScore | undefined): string {
-  if (!score) return "…";
-  if (score.kind === "mate")
-    return `${score.moves >= 0 ? "M" : "−M"}${Math.abs(score.moves)}`;
-  const value = score.value / 100;
-  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(1).replace(".", ",")}`;
-}
 const capturedTypeNames: Record<PieceType, string> = {
   q: "dama",
   r: "torre",
@@ -332,14 +337,12 @@ function AdvicePanel({
   selectedMaia,
   lineVisible,
   onToggleLine,
-  onRetry,
 }: {
   readonly feedbackEntry: MoveFeedbackRecord | undefined;
   readonly helpLevel: GameSettings["helpLevel"];
   readonly selectedMaia: boolean;
   readonly lineVisible: boolean;
   readonly onToggleLine: () => void;
-  readonly onRetry: () => void;
 }) {
   const feedback = feedbackEntry?.record;
   const displayedLine = useMemo(
@@ -408,13 +411,6 @@ function AdvicePanel({
                 onClick={onToggleLine}
               >
                 {lineVisible ? "Ocultar variante" : "Ver variante"}
-              </button>
-            ) : null}
-            {feedback.turn.actor === "user" &&
-            feedback.evidence.bestMove &&
-            feedback.evidence.bestMove.uci !== feedback.turn.playedUci ? (
-              <button type="button" onClick={onRetry}>
-                Probar otra jugada
               </button>
             ) : null}
           </div>
@@ -561,16 +557,9 @@ export function App() {
   const [positionNotice, setPositionNotice] = useState<PositionNotice>();
   const [selected, setSelected] = useState<Square>();
   const [lineVisiblePly, setLineVisiblePly] = useState<number>();
-  const [alternativePreparation, setAlternativePreparation] = useState<
-    { readonly lineId: string; readonly cursor: number } | undefined
-  >();
   const [workspaceContextNotice, setWorkspaceContextNotice] = useState("");
   const [engineState, setEngineState] = useState<EngineState>("idle");
-  const [paused, setPaused] = useState(
-    () =>
-      recovered !== null &&
-      activeLine.timeline.cursor < activeLine.timeline.session.history.length,
-  );
+  const [paused, setPaused] = useState(false);
   const [sessionError, setSessionError] = useState<string>();
   const [opponentName, setOpponentName] = useState(initialOpponentNameForMode);
   const [engineMessage, setEngineMessage] = useState(
@@ -592,6 +581,7 @@ export function App() {
     [timeline],
   );
   const hasFuture = timeline.cursor < timeline.session.history.length;
+  const isBrowsingHistory = hasFuture;
   const previousHistoryLength = useRef(game.history.length);
   const engineRef = useRef<OpponentEngine | null>(null);
   const stockfishControllerRef = useRef(getSharedBrowserStockfishController());
@@ -611,7 +601,6 @@ export function App() {
   const animationTimer = useRef<number | undefined>(undefined);
   const undoShortcut = useRef<() => void>(() => undefined);
   const redoShortcut = useRef<() => void>(() => undefined);
-  const continueShortcut = useRef<() => void>(() => undefined);
   const cancelCoachPrewarms = () => {
     for (const controller of coachPrewarmControllersRef.current)
       controller.abort();
@@ -676,29 +665,11 @@ export function App() {
         to: squarePoint(lastMove.to as Square, playerColor),
       }
     : undefined;
-  const annotationByHistoryIndex = useMemo(
-    () =>
-      new Map(
-        displayedMoveAnnotations.map((annotation) => [
-          annotation.historyIndex,
-          annotation,
-        ]),
-      ),
-    [displayedMoveAnnotations],
-  );
-  const fullLine = timeline.session;
   const feedbackByHistoryIndex = useMemo(
     () => new Map(feedbackByPly.map((entry) => [entry.historyIndex, entry])),
     [feedbackByPly],
   );
-  const historyGroups = useMemo(() => groupMoveHistory(fullLine), [fullLine]);
-  const lastMovePly = historyGroups
-    .flatMap((group) => [group.white, group.black])
-    .find((ply) => ply?.historyIndex === lastMoveIndex);
-  const lastMoveDisplay =
-    lastMove && lastMovePly
-      ? formatMoveReference(lastMovePly.beforeFen, lastMove)
-      : lastMove?.san;
+  const lastMoveDisplay = lastMove?.san;
   const selectedFeedbackEntry = feedbackByHistoryIndex.get(
     game.history.length - 1,
   );
@@ -830,7 +801,7 @@ export function App() {
     if (
       !started ||
       paused ||
-      hasFuture ||
+      isBrowsingHistory ||
       game.isGameOver ||
       game.turn !== playerColor
     )
@@ -858,7 +829,7 @@ export function App() {
     game.history.length,
     game.isGameOver,
     game.turn,
-    hasFuture,
+    isBrowsingHistory,
     paused,
     playerColor,
     settings.enginePreset,
@@ -866,7 +837,7 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!started || paused || hasFuture || game.turn !== engineColor) return;
+    if (!started || paused || isBrowsingHistory || game.turn !== engineColor) return;
     const engineMayStart = game.history.length === 0 && engineColor === "white";
     if (game.history.length === 0 && !engineMayStart) return;
     const controller = new AbortController();
@@ -874,6 +845,7 @@ export function App() {
     const requestFen = game.fen;
     const requestPosition = game;
     const requestHistoryLength = game.history.length;
+    const requestLineId = activeLine.id;
     const requestId = `opponent-${currentGeneration}-${requestHistoryLength}`;
     setEngineState("thinking");
     setSessionError(undefined);
@@ -922,14 +894,18 @@ export function App() {
           uci.slice(0, 2) as Square,
           uci.slice(2, 4) as Square,
         );
-        setTimeline((current) => {
-          const position = sessionAtNavigationCursor(current);
+        setWorkspace((current) => {
+          const line = activeSessionLine(current);
+          const position = sessionAtNavigationCursor(line.timeline);
           if (
+            line.id !== requestLineId ||
             position.fen !== requestFen ||
             position.history.length !== requestHistoryLength
           )
             return current;
-          return replaceNavigationLine(applyEngineLine(position, uci));
+          const next = syncActiveLineSession(current, applyEngineLine(position, uci));
+          setWorkspaceContextNotice(workspaceTransitionNotice(current, next));
+          return next;
         });
         setEngineState("ready");
         const resolvedName = opponentNameForBackend(engine.getStatus().backend);
@@ -959,7 +935,7 @@ export function App() {
     game.turn,
     playerColor,
     paused,
-    hasFuture,
+    isBrowsingHistory,
     settings.opponentElo,
     started,
     enginePreparation,
@@ -1211,15 +1187,13 @@ export function App() {
         )
       )
         return;
-      if (event.key === "Enter" && !hasFuture) return;
       event.preventDefault();
       if (event.key === "ArrowLeft") undoShortcut.current();
       else if (event.key === "ArrowRight") redoShortcut.current();
-      else continueShortcut.current();
     };
     window.addEventListener("keydown", handleHistoryShortcut);
     return () => window.removeEventListener("keydown", handleHistoryShortcut);
-  }, [hasFuture, started]);
+  }, [started]);
 
   if (!started) {
     return (
@@ -1259,7 +1233,7 @@ export function App() {
   }
 
   const selectSquare = (square: Square) => {
-    if (paused || engineState === "thinking" || game.turn !== playerColor)
+    if (!canPlayBoard(paused, engineState === "thinking", game.turn, playerColor))
       return;
     if (selected && destinations.includes(square)) {
       setProvisionalMoveQuality(undefined);
@@ -1272,17 +1246,27 @@ export function App() {
         items.filter((item) => item.historyIndex < game.history.length),
       );
       const nextSession = playMove(game, selected, square);
-      setWorkspace(
-        (current) =>
-          continueMoveFromCursor(
-            current,
-            selected,
-            square,
-            nextSession,
-            `trial-${Date.now()}`,
-          ).workspace,
-      );
-      setAlternativePreparation(undefined);
+      cancelCoachPrewarms();
+      coachQueueRef.current?.invalidate();
+      generation.current += 1;
+      setWorkspace((current) => {
+        // A move from a historical cursor is always a candidate. This remains
+        // true for an identical UCI move so the opponent is recalculated.
+        const source = activeSessionLine(current);
+        const forked = source.timeline.cursor < source.timeline.session.history.length
+          ? createTrialLine(current, `variation-${Date.now()}`)
+          : current;
+        const next = syncActiveLineSession(forked, nextSession);
+        const notice = workspaceTransitionNotice(forked, next);
+        setWorkspaceContextNotice(
+          notice ||
+            (forked !== current && forked.lines.length <= current.lines.length
+              ? "Se eliminó automáticamente la variante más antigua."
+              : ""),
+        );
+        return next;
+      });
+      if (isBrowsingHistory) setWorkspaceContextNotice("Se creó una variante desde el historial.");
       setSelected(undefined);
       return;
     }
@@ -1346,7 +1330,6 @@ export function App() {
       )?.record,
     );
     setSelected(undefined);
-    setPaused(true);
     setSessionError(undefined);
     setEngineState("idle");
     setMoveAnimation(undefined);
@@ -1370,7 +1353,6 @@ export function App() {
         ?.record,
     );
     setSelected(undefined);
-    setPaused(nextCursor < timeline.session.history.length);
     setSessionError(undefined);
     setEngineState("idle");
     setMoveAnimation(undefined);
@@ -1381,7 +1363,6 @@ export function App() {
   redoShortcut.current = redo;
 
   const togglePaused = () => {
-    if (paused && hasFuture) return;
     if (!paused) {
       cancelCoachPrewarms();
       setProvisionalMoveQuality(undefined);
@@ -1431,9 +1412,6 @@ export function App() {
     generation.current += 1;
     setProvisionalMoveQuality(clearProvisionalForLineChange());
     setWorkspace(nextWorkspace);
-    setPaused(
-      nextLine.timeline.cursor < nextLine.timeline.session.history.length,
-    );
     setFeedback(
       nextLine.feedbackByPly.find(
         (entry) => entry.historyIndex === nextLine.timeline.cursor - 1,
@@ -1470,186 +1448,16 @@ export function App() {
     }
   };
 
-  const selectHistoryPly = (cursor: number) => {
-    if (cursor < 0 || cursor > timeline.session.history.length) return;
-    cancelCoachPrewarms();
-    setProvisionalMoveQuality(undefined);
-    coachQueueRef.current?.invalidate();
-    setFeedbackByPly((items) =>
-      items.filter((item) => item.status !== "pending"),
+  const selectWorkspaceLine = (lineId: string, cursor: number) => {
+    applyWorkspaceLineChange(
+      navigateSessionLine(selectSessionLine(workspace, lineId), cursor),
     );
-    generation.current += 1;
-    setTimeline(moveNavigationCursor(timeline, cursor));
-    setSelected(undefined);
-    setPaused(cursor < timeline.session.history.length);
-    setFeedback(
-      feedbackByPly.find((record) => record.historyIndex === cursor - 1)
-        ?.record,
-    );
-    setEngineState("idle");
-    setEngineMessage(
-      cursor < timeline.session.history.length
-        ? "Vista histórica: el tablero está en pausa."
-        : `${opponentName} está disponible como oponente local.`,
-    );
-  };
-
-  const continueFromHere = () => {
-    if (!hasFuture) return;
-    cancelCoachPrewarms();
-    setProvisionalMoveQuality(undefined);
-    coachQueueRef.current?.invalidate();
-    generation.current += 1;
-    try {
-      setWorkspace((current) =>
-        createTrialLine(current, `trial-${Date.now()}`),
-      );
-    } catch {
-      setSessionError(
-        "Ya hay cinco pruebas. Elige una para eliminar antes de crear otra.",
-      );
-      return;
-    }
-    setSelected(undefined);
-    setEngineState("idle");
-    setPaused(false);
-    setEngineMessage("Continuación creada desde la posición seleccionada.");
-  };
-
-  const recoverPreviousBranch = () => {
-    // Former v5 recovery is now represented as a selectable trial line.
-    return;
-    /*
-    cancelCoachPrewarms();
-    setProvisionalMoveQuality(undefined);
-    coachQueueRef.current?.invalidate();
-    generation.current += 1;
-    previousHistoryLength.current = recoverySnapshot.cursor;
-    setTimeline(
-      createNavigationTimeline(
-        recoverySnapshot.session,
-        recoverySnapshot.cursor,
-      ),
-    );
-    setMoveAnnotations(recoverySnapshot.annotations);
-    setFeedbackByPly(recoverySnapshot.feedbackByPly);
-    setFeedback(
-      recoverySnapshot.feedbackByPly.find(
-        (record) => record.historyIndex === recoverySnapshot.cursor - 1,
-      )?.record,
-    );
-    setRecoverySnapshot(undefined);
-    setSelected(undefined);
-    setPaused(
-      recoverySnapshot.cursor < recoverySnapshot.session.history.length,
-    );
-    setSessionError(undefined);
-    setEngineState("idle");
-    setMoveAnimation(undefined);
-    setEngineMessage("Rama anterior recuperada. Puedes continuar desde aquí.");
-    */
-  };
-
-  continueShortcut.current = continueFromHere;
-
-  const retryAlternative = () => {
-    const record = adviceEntry?.record;
-    if (
-      !record ||
-      record.turn.actor !== "user" ||
-      game.history.length !== record.turn.ply
-    )
-      return;
-    const before = undoMove(game);
-    cancelCoachPrewarms();
-    setProvisionalMoveQuality(undefined);
-    coachQueueRef.current?.invalidate();
-    generation.current += 1;
-    setLineVisiblePly(undefined);
-    setTimeline(moveNavigationCursor(timeline, before.history.length));
-    setAlternativePreparation({
-      lineId: workspace.activeLineId,
-      cursor: timeline.cursor,
-    });
-    setPaused(false);
-    setEngineState("idle");
-    setEngineMessage("Encuentra una alternativa y comprueba tu idea.");
-  };
-
-  const cancelAlternativePreparation = () => {
-    const preparation = alternativePreparation;
-    if (!preparation) return;
-    const restored = navigateSessionLine(
-      selectSessionLine(workspace, preparation.lineId),
-      preparation.cursor,
-    );
-    applyWorkspaceLineChange(restored);
-    setAlternativePreparation(undefined);
-    setWorkspaceContextNotice("Volviste a la partida guardada.");
-  };
-
-  const selectWorkspaceLine = (lineId: string) => {
-    applyWorkspaceLineChange(selectSessionLine(workspace, lineId));
-    setAlternativePreparation(undefined);
-  };
-
-  const returnToMainLine = () => {
-    selectWorkspaceLine(workspace.mainLineId);
-    setWorkspaceContextNotice("Contexto cambiado a la partida principal.");
-  };
-
-  const promoteWorkspaceLine = (lineId: string) => {
-    applyWorkspaceLineChange(promoteSessionLine(workspace, lineId));
-    setAlternativePreparation(undefined);
-    setWorkspaceContextNotice("La prueba pasó a ser la partida principal.");
+    setWorkspaceContextNotice("Ruta activa actualizada.");
   };
 
   const deleteWorkspaceLine = (lineId: string) => {
     applyWorkspaceLineChange(deleteSessionLine(workspace, lineId));
-    setAlternativePreparation(undefined);
-    setWorkspaceContextNotice("La prueba se eliminó.");
-  };
-
-  const renderHistoryPly = (
-    ply: HistoryPly | undefined,
-    moveNumber: number,
-  ) => {
-    if (!ply) return <span className="move-slot-empty" aria-hidden="true" />;
-    const analysis = feedbackByHistoryIndex.get(ply.historyIndex);
-    const evaluation =
-      analysis?.status === "unavailable"
-        ? "—"
-        : formatEvaluation(analysis?.record?.evidence.after.score);
-    const annotation = annotationByHistoryIndex.get(ply.historyIndex);
-    const quality =
-      ply.color === playerColor && annotation
-        ? `${annotation.provisional ? "valoración provisional, " : ""}${qualityMeta[annotation.label].label}`
-        : undefined;
-    const displayedMove = ply.display;
-    return (
-      <button
-        type="button"
-        className="move-entry san-button"
-        aria-current={
-          game.history.length === ply.historyIndex + 1 ? "step" : undefined
-        }
-        aria-label={`Jugada ${moveNumber} de ${colorName(ply.color)}, ${displayedMove}${settings.showEvaluation ? `, evaluación ${evaluation}` : ""}${quality ? `, ${quality}` : ""}`}
-        onClick={() => selectHistoryPly(ply.historyIndex + 1)}
-      >
-        <span>{displayedMove}</span>
-        {settings.showEvaluation ? (
-          <small className="move-evaluation" aria-hidden="true">
-            {evaluation}
-          </small>
-        ) : null}
-        {ply.color === playerColor && annotation ? (
-          <QualityBadge
-            label={annotation.label}
-            provisional={annotation.provisional === true}
-          />
-        ) : null}
-      </button>
-    );
+    setWorkspaceContextNotice("La variante se eliminó.");
   };
 
   return (
@@ -1720,15 +1528,9 @@ export function App() {
                   : adviceEntry?.historyIndex,
               )
             }
-            onRetry={retryAlternative}
             selectedMaia={hasFuture && selectedFeedbackEntry?.actor === "maia"}
           />
           <section className="board-panel" aria-label="Tablero de ajedrez">
-            {alternativePreparation ? (
-              <AlternativePreparationBar
-                onCancel={cancelAlternativePreparation}
-              />
-            ) : null}
             <p className="board-help" id="board-help">
               Selecciona una pieza y después una casilla marcada para moverla.
             </p>
@@ -1758,9 +1560,12 @@ export function App() {
                         aria-label={`${square}${piece ? `, pieza ${piece.color === "white" ? "blanca" : "negra"}` : ", vacía"}${isDestination ? ", destino legal" : ""}${isLastMoveFrom ? ", origen de la última jugada" : ""}${isLastMoveTo ? ", destino de la última jugada" : ""}${squareQuality ? `, calidad de la jugada: ${qualityMeta[squareQuality.label].label}` : ""}`}
                         aria-pressed={isSelected}
                         disabled={
-                          paused ||
-                          engineState === "thinking" ||
-                          game.turn !== playerColor
+                          !canPlayBoard(
+                            paused,
+                            engineState === "thinking",
+                            game.turn,
+                            playerColor,
+                          )
                         }
                       >
                         {piece ? (
@@ -1916,20 +1721,11 @@ export function App() {
               </strong>
               <p>{engineMessage}</p>
             </section>
-            <WorkspaceLinePanel
+            <VariationHistory
               workspace={workspace}
               onSelect={selectWorkspaceLine}
-              onReturnToMain={returnToMainLine}
-              onPromote={promoteWorkspaceLine}
               onDelete={deleteWorkspaceLine}
-              onContextChange={setWorkspaceContextNotice}
             />
-            {shouldPromptPromotion(workspace) ? (
-              <PromotionSuggestion
-                onPromote={() => promoteWorkspaceLine(workspace.activeLineId)}
-                onDismiss={() => setWorkspace(dismissPromotionPrompt)}
-              />
-            ) : null}
             <div className="session-actions" aria-label="Acciones de partida">
               <div
                 className="history-controls"
@@ -1960,19 +1756,9 @@ export function App() {
                 type="button"
                 className="pause-button"
                 onClick={togglePaused}
-                disabled={paused && hasFuture}
               >
                 {paused ? "Reanudar" : "Pausar"}
               </button>
-              {hasFuture ? (
-                <button
-                  type="button"
-                  data-shortcut="continue"
-                  onClick={continueFromHere}
-                >
-                  Continuar desde aquí
-                </button>
-              ) : null}
               <details className="utility-menu">
                 <summary aria-label="Abrir más acciones de partida">
                   <span aria-hidden="true">•••</span>
@@ -1983,15 +1769,6 @@ export function App() {
                   <button type="button" onClick={reset}>
                     Reiniciar partida
                   </button>
-                  {false ? (
-                    <button
-                      type="button"
-                      onClick={recoverPreviousBranch}
-                      aria-label="Recuperar la rama anterior guardada"
-                    >
-                      Recuperar rama anterior
-                    </button>
-                  ) : null}
                   <button type="button" onClick={downloadPgn}>
                     Exportar PGN
                   </button>
@@ -2028,25 +1805,6 @@ export function App() {
                 ) : null}
               </div>
             ) : null}
-            <section className="moves" aria-labelledby="moves-title">
-              <div className="moves-heading">
-                <h2 id="moves-title">Movimientos</h2>
-                <span>{game.history.length}</span>
-              </div>
-              {historyGroups.length ? (
-                <ol>
-                  {historyGroups.map((group) => (
-                    <li key={group.moveNumber}>
-                      <span className="move-number">{group.moveNumber}.</span>
-                      {renderHistoryPly(group.white, group.moveNumber)}
-                      {renderHistoryPly(group.black, group.moveNumber)}
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p>Aún no hay movimientos.</p>
-              )}
-            </section>
           </aside>
         </div>
       </section>

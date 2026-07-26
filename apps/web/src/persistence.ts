@@ -43,7 +43,7 @@ export interface MoveFeedbackRecord {
   readonly record?: CoachTurnRecord;
 }
 
-export interface RecoverySnapshot {
+interface LegacyRecoverySnapshot {
   readonly session: GameSession;
   readonly cursor: number;
   readonly annotations: readonly MoveQualityAnnotation[];
@@ -59,7 +59,6 @@ export interface StoredGame {
   readonly cursor: number;
   readonly annotations: readonly MoveQualityAnnotation[];
   readonly feedbackByPly: readonly MoveFeedbackRecord[];
-  readonly recovery?: RecoverySnapshot;
   readonly savedAt: string;
 }
 
@@ -203,12 +202,25 @@ function validCursor(session: GameSession, cursor: unknown): cursor is number {
   );
 }
 
+function hasSharedPrefix(
+  parent: GameSession,
+  child: GameSession,
+  ply: number,
+): boolean {
+  if (!Number.isInteger(ply) || ply < 0) return false;
+  if (ply > parent.history.length || ply > child.history.length) return false;
+  for (let index = 0; index < ply; index += 1) {
+    if (parent.history[index]?.uci !== child.history[index]?.uci) return false;
+  }
+  return true;
+}
+
 function parseRecoverySnapshot(
   value: unknown,
-): RecoverySnapshot | null | undefined {
+): LegacyRecoverySnapshot | null | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<RecoverySnapshot>;
+  const candidate = value as Partial<LegacyRecoverySnapshot>;
   if (
     !isSessionShape(candidate.session) ||
     !validCursor(candidate.session, candidate.cursor)
@@ -242,6 +254,50 @@ function parseRecoverySnapshot(
     cursor: candidate.cursor,
     annotations,
     feedbackByPly: Object.freeze(feedbackByPly),
+  };
+}
+
+function sameHistory(left: GameSession, right: GameSession): boolean {
+  return (
+    left.history.length === right.history.length &&
+    left.history.every((move, index) => move.uci === right.history[index]?.uci)
+  );
+}
+
+function migrateLegacyRecovery(
+  workspace: SessionWorkspace,
+  recovery: LegacyRecoverySnapshot | undefined,
+): SessionWorkspace {
+  if (recovery === undefined) return workspace;
+  const existing = workspace.lines.find(
+    (line) =>
+      line.id !== workspace.mainLineId &&
+      line.timeline.cursor === recovery.cursor &&
+      sameHistory(line.timeline.session, recovery.session),
+  );
+  if (existing) {
+    return {
+      ...workspace,
+      activeLineId: existing.id,
+    };
+  }
+  const legacyTrialId = workspace.lines.some((line) => line.id === "trial-1")
+    ? `legacy-recovery-${workspace.lines.length}`
+    : "trial-1";
+  return {
+    ...workspace,
+    activeLineId: legacyTrialId,
+    lines: [
+      ...workspace.lines,
+      {
+        id: legacyTrialId,
+        timeline: { session: recovery.session, cursor: recovery.cursor },
+        annotations: recovery.annotations,
+        feedbackByPly: recovery.feedbackByPly,
+        fork: { lineId: workspace.mainLineId, ply: recovery.cursor },
+        revision: 0,
+      } satisfies SessionLine,
+    ],
   };
 }
 
@@ -302,7 +358,7 @@ export function loadStoredGame(
       cursor?: number;
       annotations?: readonly MoveQualityAnnotation[];
       feedbackByPly?: readonly MoveFeedbackRecord[];
-      recovery?: RecoverySnapshot;
+      recovery?: LegacyRecoverySnapshot;
     };
     const version = (candidate as { version?: number }).version;
     const settings = normalizeGameSettings(candidate.settings);
@@ -317,16 +373,19 @@ export function loadStoredGame(
     )
       return null;
     if (version === 6) {
-      const workspace = parseWorkspace(candidate.workspace);
-      if (!workspace) return null;
-      const main = workspace.lines.find(
-        (line) => line.id === workspace.mainLineId,
-      )!;
       const recovery =
         candidate.recovery === undefined
           ? undefined
           : parseRecoverySnapshot(candidate.recovery);
       if (recovery === null) return null;
+      const parsedWorkspace = parseWorkspace(candidate.workspace);
+      const workspace = parsedWorkspace
+        ? migrateLegacyRecovery(parsedWorkspace, recovery)
+        : null;
+      if (!workspace) return null;
+      const main = workspace.lines.find(
+        (line) => line.id === workspace.mainLineId,
+      )!;
       return {
         version: 6,
         settings,
@@ -335,7 +394,6 @@ export function loadStoredGame(
         cursor: main.timeline.cursor,
         annotations: main.annotations,
         feedbackByPly: main.feedbackByPly,
-        ...(recovery === undefined ? {} : { recovery }),
         savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : "",
       };
     }
@@ -415,11 +473,11 @@ export function loadStoredGame(
               revision: 0,
             } satisfies SessionLine,
           ];
-    const workspace = {
+    const workspace = migrateLegacyRecovery({
       ...main,
       lines: [migratedMain, ...trial],
       activeLineId: trial.length ? "trial-1" : "main",
-    };
+    }, undefined);
     return {
       version: 6,
       settings,
@@ -428,7 +486,6 @@ export function loadStoredGame(
       cursor,
       annotations: migratedMain.annotations,
       feedbackByPly: migratedMain.feedbackByPly,
-      ...(recovery === undefined || recovery === null ? {} : { recovery }),
       savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : "",
     };
   } catch {
@@ -443,7 +500,6 @@ export function saveStoredGame(
   annotations: readonly MoveQualityAnnotation[] = [],
   feedbackByPly: readonly MoveFeedbackRecord[] = [],
   cursor?: number,
-  recovery?: RecoverySnapshot,
 ): void {
   const normalizedWorkspace: SessionWorkspace =
     "version" in workspace
@@ -460,26 +516,10 @@ export function saveStoredGame(
             annotations,
             feedbackByPly,
           };
-          const trial =
-            recovery === undefined
-              ? []
-              : [
-                  {
-                    id: "trial-1",
-                    timeline: {
-                      session: recovery.session,
-                      cursor: recovery.cursor,
-                    },
-                    annotations: recovery.annotations,
-                    feedbackByPly: recovery.feedbackByPly,
-                    fork: { lineId: "main", ply: recovery.cursor },
-                    revision: 0,
-                  } satisfies SessionLine,
-                ];
           return {
             ...base,
-            lines: [mainLine, ...trial],
-            activeLineId: trial.length ? "trial-1" : "main",
+            lines: [mainLine],
+            activeLineId: "main",
           };
         })();
   const main = normalizedWorkspace.lines.find(
@@ -493,7 +533,6 @@ export function saveStoredGame(
     cursor: main.timeline.cursor,
     annotations: main.annotations,
     feedbackByPly: main.feedbackByPly,
-    ...(recovery === undefined ? {} : { recovery }),
     savedAt: new Date().toISOString(),
   };
   storage.setItem(STORAGE_KEY, JSON.stringify(stored));
@@ -508,8 +547,7 @@ function parseWorkspace(value: unknown): SessionWorkspace | null {
     typeof candidate.mainLineId !== "string" ||
     typeof candidate.activeLineId !== "string" ||
     !Number.isInteger(candidate.revision) ||
-    candidate.lines.length < 1 ||
-    candidate.lines.length > 6
+    candidate.lines.length < 1
   )
     return null;
   const ids = new Set<string>();
@@ -567,34 +605,36 @@ function parseWorkspace(value: unknown): SessionWorkspace | null {
       ),
       ...(line.fork === undefined ? {} : { fork: line.fork }),
       revision,
-      ...(line.promotionPromptShown === true
-        ? { promotionPromptShown: true }
-        : {}),
     });
   }
-  if (!ids.has(candidate.mainLineId)) return null;
-  const activeLineId = ids.has(candidate.activeLineId)
+  const main = lines.find((line) => line.id === candidate.mainLineId);
+  if (!main || main.fork !== undefined) return null;
+  const lineMap = new Map(lines.map((line) => [line.id, line] as const));
+  const kept = new Set<string>([main.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of lines) {
+      if (kept.has(line.id) || line.id === main.id) continue;
+      if (!line.fork) continue;
+      const parent = lineMap.get(line.fork.lineId);
+      if (!parent || !kept.has(parent.id)) continue;
+      if (!hasSharedPrefix(parent.timeline.session, line.timeline.session, line.fork.ply))
+        continue;
+      kept.add(line.id);
+      changed = true;
+    }
+  }
+  const recoveredLines = lines.filter((line) => kept.has(line.id));
+  const activeLineId = kept.has(candidate.activeLineId)
     ? candidate.activeLineId
     : candidate.mainLineId;
-  const main = lines.find((line) => line.id === candidate.mainLineId)!;
-  if (
-    main.fork !== undefined ||
-    lines
-      .filter((line) => line.id !== main.id)
-      .some(
-        (line) =>
-          !line.fork ||
-          !ids.has(line.fork.lineId) ||
-          line.fork.ply > line.timeline.session.history.length,
-      )
-  )
-    return null;
   return {
     version: 6,
     mainLineId: candidate.mainLineId,
     activeLineId,
     revision: candidate.revision!,
-    lines,
+    lines: recoveredLines,
   };
 }
 

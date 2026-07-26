@@ -49,19 +49,51 @@ test("extracts the actual Vite URL from launcher output", () => {
   assert.equal(parseViteDevServerUrl("ready in 250ms"), undefined);
 });
 
-test("uses cmd.exe indirection for Vite on Windows", () => {
+test("uses Windows PowerShell for Vite when the target platform is win32", () => {
   const spec = createViteSpawnSpec({
     platform: "win32",
     pnpmCommand: "C:\\tools\\pnpm.cmd",
     port: 5173,
   });
 
-  assert.equal(spec.command.toLowerCase().endsWith("cmd.exe"), true);
+  assert.equal(spec.command, "powershell.exe");
   assert.deepEqual(spec.args, [
-    "/d",
-    "/s",
-    "/c",
-    "C:\\tools\\pnpm.cmd --filter @chess-coach/web exec vite --host 127.0.0.1 --port 5173 --strictPort --force",
+    "-NoProfile",
+    "-Command",
+    "& 'C:\\tools\\pnpm.cmd' '--filter' '@chess-coach/web' 'exec' 'vite' '--host' '127.0.0.1' '--port' '5173' '--strictPort' '--force'",
+  ]);
+});
+
+test("prefers the Node-adjacent corepack shim for Vite on Windows", () => {
+  const spec = createViteSpawnSpec({
+    platform: "win32",
+    nodeExecutablePath: "C:\\Program Files\\nodejs\\node.exe",
+    corepackExists: (pathname) =>
+      pathname === "C:\\Program Files\\nodejs\\corepack.cmd",
+    port: 5173,
+  });
+
+  assert.equal(spec.command.toLowerCase().endsWith("powershell.exe"), true);
+  assert.deepEqual(spec.args, [
+    "-NoProfile",
+    "-Command",
+    "& 'C:\\Program Files\\nodejs\\corepack.cmd' 'pnpm' '--filter' '@chess-coach/web' 'exec' 'vite' '--host' '127.0.0.1' '--port' '5173' '--strictPort' '--force'",
+  ]);
+});
+
+test("always quotes the Windows package manager executable even without spaces", () => {
+  const spec = createViteSpawnSpec({
+    platform: "win32",
+    nodeExecutablePath: "C:\\dev&tools\\node\\node.exe",
+    corepackExists: (pathname) =>
+      pathname === "C:\\dev&tools\\node\\corepack.cmd",
+    port: 5173,
+  });
+
+  assert.deepEqual(spec.args, [
+    "-NoProfile",
+    "-Command",
+    "& 'C:\\dev&tools\\node\\corepack.cmd' 'pnpm' '--filter' '@chess-coach/web' 'exec' 'vite' '--host' '127.0.0.1' '--port' '5173' '--strictPort' '--force'",
   ]);
 });
 

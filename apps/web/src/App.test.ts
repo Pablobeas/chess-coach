@@ -19,6 +19,7 @@ import {
   canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
+  isAbortErrorLike,
   isCurrentCoachRequest,
   isRetryTargetActive,
   opponentNameForBackend,
@@ -238,6 +239,14 @@ describe("coach feedback states", () => {
       "unavailable",
     );
     expect(coachFailureAction(internalAbort, false, false, 0)).toBe("stale");
+    expect(isAbortErrorLike(internalAbort)).toBe(true);
+    expect(isAbortErrorLike({ name: "AbortError" })).toBe(true);
+    expect(coachFailureAction({ name: "AbortError" }, false, true, 0)).toBe(
+      "auto-retry",
+    );
+    expect(coachFailureAction({ name: "OtherError" }, false, true, 0)).toBe(
+      "unavailable",
+    );
   });
 
   it("only replaces a matching pending feedback for an explicit retry target", () => {

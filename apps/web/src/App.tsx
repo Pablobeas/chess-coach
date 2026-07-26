@@ -124,13 +124,17 @@ export function coachFailureAction(
   autoAttempts: number,
 ): "auto-retry" | "unavailable" | "stale" {
   if (!identityActive || outerSignalAborted) return "stale";
-  if (
-    error instanceof DOMException &&
-    error.name === "AbortError" &&
-    autoAttempts < 1
-  )
-    return "auto-retry";
+  if (isAbortErrorLike(error) && autoAttempts < 1) return "auto-retry";
   return "unavailable";
+}
+
+export function isAbortErrorLike(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { readonly name?: unknown }).name === "AbortError"
+  );
 }
 
 export function shouldReplacePendingFeedback(

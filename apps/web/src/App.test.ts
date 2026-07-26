@@ -4,6 +4,7 @@ import {
   createInitialGame,
   loadPgn,
   loadPosition,
+  replayHistory,
 } from "@chess-coach/chess-core";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -12,13 +13,16 @@ import {
   GameTurnStatus,
   AdvicePanel,
   MobileEvaluationBar,
+  finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
   canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
   isCurrentCoachRequest,
+  isRetryTargetActive,
   opponentNameForBackend,
   readCurrentBuildId,
+  retryAnalysisTarget,
   workspaceTransitionNotice,
 } from "./App";
 import { createSessionWorkspace, createTrialLine } from "./sessionWorkspace";
@@ -217,5 +221,91 @@ describe("coach feedback states", () => {
     const pendingB = { identity: { requestId: "coach-b" } };
     expect(isCurrentCoachRequest(pendingB, "coach-a")).toBe(false);
     expect(isCurrentCoachRequest(pendingB, "coach-b")).toBe(true);
+  });
+
+  it("keeps the exact player ply as the retry target after a Maia reply", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e4c5 = applyMove(e4, { from: "c7", to: "c5" });
+    const workspace = createSessionWorkspace(e4c5);
+    const target = retryAnalysisTarget(workspace, {
+      historyIndex: 0,
+      uci: "e2e4",
+      beforeFen: createInitialGame().fen,
+      afterFen: e4.fen,
+    });
+    expect(e4c5.history).toHaveLength(2);
+    expect(target).toMatchObject({
+      historyIndex: 0,
+      uci: "e2e4",
+      afterFen: e4.fen,
+    });
+    expect(isRetryTargetActive(workspace, target)).toBe(true);
+    expect(
+      isRetryTargetActive(createTrialLine(workspace, "other"), target),
+    ).toBe(false);
+  });
+
+  it("finalizes the origin pending retry after switching lines and ignores deleted or newer entries", () => {
+    const e4 = applyMove(createInitialGame(), { from: "e2", to: "e4" });
+    const e4c5 = applyMove(e4, { from: "c7", to: "c5" });
+    const entry = replayHistory(e4c5)[0]!;
+    const base = createSessionWorkspace(e4c5);
+    const identity = {
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      ply: 1,
+      actor: "user" as const,
+      uci: "e2e4",
+      beforeFen: entry.beforeFen,
+      afterFen: entry.afterFen,
+      requestId: "retry-a",
+    };
+    const pending = {
+      ...base,
+      lines: base.lines.map((line) => ({
+        ...line,
+        feedbackByPly: [
+          {
+            historyIndex: 0,
+            uci: "e2e4",
+            actor: "user" as const,
+            beforeFen: entry.beforeFen,
+            afterFen: entry.afterFen,
+            status: "pending" as const,
+          },
+        ],
+      })),
+    };
+    const switched = createTrialLine(pending, "trial");
+    const finalized = finalizePendingCoachAttempt(switched, identity);
+    expect(finalized.activeLineId).toBe("trial");
+    expect(
+      finalized.lines.find((line) => line.id === "main")?.feedbackByPly[0]
+        ?.status,
+    ).toBe("unavailable");
+    const deleted = {
+      ...finalized,
+      lines: finalized.lines.filter((line) => line.id !== "main"),
+    };
+    expect(finalizePendingCoachAttempt(deleted, identity)).toEqual(deleted);
+    const ready = {
+      ...finalized,
+      lines: finalized.lines.map((line) =>
+        line.id === "main"
+          ? {
+              ...line,
+              feedbackByPly: [
+                { ...line.feedbackByPly[0]!, status: "ready" as const },
+              ],
+            }
+          : line,
+      ),
+    };
+    expect(
+      finalizePendingCoachAttempt(ready, identity).lines.find(
+        (line) => line.id === "main",
+      )?.feedbackByPly[0]?.status,
+    ).toBe("ready");
   });
 });

@@ -2,7 +2,9 @@ import {
   createInitialGame,
   formatMoveSequence,
   loadPgn,
+  loadPosition,
   listCaptures,
+  replayHistory,
   restoreSession,
   type GameSession,
   type PieceType,
@@ -113,6 +115,78 @@ export function isCurrentCoachRequest(
   requestId: string,
 ): boolean {
   return pending?.identity.requestId === requestId;
+}
+
+export interface RetryAnalysisTarget {
+  readonly lineId: string;
+  readonly lineRole: "main" | "trial";
+  readonly fork?: { readonly lineId: string; readonly ply: number };
+  readonly historyIndex: number;
+  readonly uci: string;
+  readonly beforeFen: string;
+  readonly afterFen: string;
+}
+
+export function retryAnalysisTarget(
+  workspace: SessionWorkspace,
+  entry: Pick<
+    MoveFeedbackRecord,
+    "historyIndex" | "uci" | "beforeFen" | "afterFen"
+  >,
+): RetryAnalysisTarget {
+  const line = activeSessionLine(workspace);
+  return {
+    lineId: line.id,
+    lineRole: line.id === workspace.mainLineId ? "main" : "trial",
+    ...(line.fork === undefined ? {} : { fork: line.fork }),
+    historyIndex: entry.historyIndex,
+    uci: entry.uci,
+    beforeFen: entry.beforeFen,
+    afterFen: entry.afterFen,
+  };
+}
+
+export function isRetryTargetActive(
+  workspace: SessionWorkspace,
+  target: RetryAnalysisTarget,
+): boolean {
+  const line = activeSessionLine(workspace);
+  const entry = replayHistory(line.timeline.session)[target.historyIndex];
+  return (
+    line.id === target.lineId &&
+    (line.id === workspace.mainLineId ? "main" : "trial") === target.lineRole &&
+    line.fork?.lineId === target.fork?.lineId &&
+    line.fork?.ply === target.fork?.ply &&
+    entry?.move.uci === target.uci &&
+    entry.beforeFen === target.beforeFen &&
+    entry.afterFen === target.afterFen
+  );
+}
+
+export function finalizePendingCoachAttempt(
+  workspace: SessionWorkspace,
+  identity: AnalysisRequestIdentity,
+): SessionWorkspace {
+  const line = workspace.lines.find((item) => item.id === identity.lineId);
+  if (!line) return workspace;
+  const feedbackByPly = line.feedbackByPly.map((entry) =>
+    entry.historyIndex === identity.historyIndex &&
+    entry.uci === identity.uci &&
+    entry.beforeFen === identity.beforeFen &&
+    entry.afterFen === identity.afterFen &&
+    entry.status === "pending"
+      ? { ...entry, status: "unavailable" as const }
+      : entry,
+  );
+  return {
+    ...workspace,
+    revision: workspace.revision + 1,
+    lines: workspace.lines.map((item) =>
+      item.id === line.id
+        ? { ...item, revision: item.revision + 1, feedbackByPly }
+        : item,
+    ),
+  };
 }
 type PositionNotice = {
   readonly kind: "check" | "checkmate";
@@ -696,8 +770,27 @@ export function App() {
   }>();
   const coachPendingRef = useRef<typeof coachPending>(undefined);
   coachPendingRef.current = coachPending;
+  const clearPendingCoachState = (identity: AnalysisRequestIdentity) => {
+    setCoachPending((current) =>
+      current?.identity.requestId === identity.requestId ? undefined : current,
+    );
+    setCoachSlow((current) =>
+      coachPendingRef.current?.identity.requestId === identity.requestId
+        ? false
+        : current,
+    );
+  };
+  const cancelPendingCoachAttempt = () => {
+    const pending = coachPendingRef.current;
+    if (!pending) return;
+    const { identity } = pending;
+    setWorkspace((current) => finalizePendingCoachAttempt(current, identity));
+    clearPendingCoachState(identity);
+  };
   const [coachSlow, setCoachSlow] = useState(false);
   const [coachRetry, setCoachRetry] = useState(0);
+  const [retryTarget, setRetryTarget] = useState<RetryAnalysisTarget>();
+  const retryLineRef = useRef<string | undefined>(undefined);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const mobileTreeTriggerRef = useRef<HTMLButtonElement>(null);
@@ -706,6 +799,12 @@ export function App() {
   const mobileMoreCloseRef = useRef<HTMLButtonElement>(null);
   const treeWasOpenRef = useRef(false);
   const moreWasOpenRef = useRef(false);
+  useEffect(() => {
+    const lineKey = `${activeLine.id}:${activeLine.fork?.lineId ?? ""}:${activeLine.fork?.ply ?? ""}`;
+    if (retryLineRef.current !== undefined && retryLineRef.current !== lineKey)
+      setRetryTarget(undefined);
+    retryLineRef.current = lineKey;
+  }, [activeLine.fork?.lineId, activeLine.fork?.ply, activeLine.id]);
   const game = useMemo(
     () => createLocalGame(sessionAtNavigationCursor(timeline)),
     [timeline],
@@ -1143,7 +1242,14 @@ export function App() {
   ]);
 
   useEffect(() => {
-    const historyIndex = game.history.length - 1;
+    if (retryTarget && !isRetryTargetActive(workspace, retryTarget)) {
+      setRetryTarget(undefined);
+      return;
+    }
+    const retriedEntry = retryTarget
+      ? replayHistory(game)[retryTarget.historyIndex]
+      : undefined;
+    const historyIndex = retryTarget?.historyIndex ?? game.history.length - 1;
     const move = game.history[historyIndex];
     if (!started || historyIndex < 0 || !move) return;
     if (
@@ -1154,9 +1260,15 @@ export function App() {
     )
       return;
 
-    const after = game;
-    const before = undoMove(after);
-    const actor = lastMoveColor === playerColor ? "user" : "maia";
+    const after = retryTarget ? loadPosition(retryTarget.afterFen) : game;
+    const before = retryTarget
+      ? loadPosition(retryTarget.beforeFen)
+      : undoMove(after);
+    const actor = retryTarget
+      ? "user"
+      : lastMoveColor === playerColor
+        ? "user"
+        : "maia";
 
     // Maia's reply is already produced by the opponent engine. Running two
     // additional Stockfish searches for every Maia ply makes the serial coach
@@ -1172,10 +1284,25 @@ export function App() {
       beforeFen: before.fen,
       afterFen: after.fen,
     } as const;
-    const analysisIdentity = createAnalysisRequestIdentity(
-      workspace,
-      `coach-${historyIndex}-${move.uci}-${++coachRequestSequence.current}`,
-    );
+    const requestId = `coach-${historyIndex}-${move.uci}-${++coachRequestSequence.current}`;
+    const analysisIdentity =
+      retryTarget && retriedEntry
+        ? {
+            lineId: activeLine.id,
+            lineRole:
+              activeLine.id === workspace.mainLineId
+                ? ("main" as const)
+                : ("trial" as const),
+            ...(activeLine.fork === undefined ? {} : { fork: activeLine.fork }),
+            historyIndex,
+            ply: historyIndex + 1,
+            actor: "user" as const,
+            uci: move.uci,
+            beforeFen: before.fen,
+            afterFen: after.fen,
+            requestId,
+          }
+        : createAnalysisRequestIdentity(workspace, requestId);
     activeCoachRequestId.current = analysisIdentity.requestId;
     setCoachPending({ identity: analysisIdentity, startedAt: Date.now() });
     setFeedbackByPly((entries) => [
@@ -1334,6 +1461,11 @@ export function App() {
             ? undefined
             : current,
         );
+        setRetryTarget((current) =>
+          current?.historyIndex === historyIndex && current.uci === move.uci
+            ? undefined
+            : current,
+        );
       } catch (error) {
         if (
           activeCoachRequestId.current !== analysisIdentity.requestId ||
@@ -1361,6 +1493,11 @@ export function App() {
             ? undefined
             : current,
         );
+        setRetryTarget((current) =>
+          current?.historyIndex === historyIndex && current.uci === move.uci
+            ? undefined
+            : current,
+        );
       }
     });
   }, [
@@ -1372,6 +1509,8 @@ export function App() {
     settings.helpLevel,
     started,
     coachRetry,
+    retryTarget,
+    activeLine,
   ]);
 
   useEffect(() => {
@@ -1455,6 +1594,8 @@ export function App() {
       );
       const nextSession = playMove(game, selected, square);
       cancelCoachPrewarms();
+      cancelPendingCoachAttempt();
+      setRetryTarget(undefined);
       coachQueueRef.current?.invalidate();
       generation.current += 1;
       setWorkspace((current) => {
@@ -1485,6 +1626,8 @@ export function App() {
 
   const reset = () => {
     cancelCoachPrewarms();
+    cancelPendingCoachAttempt();
+    setRetryTarget(undefined);
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
     generation.current += 1;
@@ -1526,6 +1669,8 @@ export function App() {
   const undo = () => {
     if (game.history.length === 0) return;
     cancelCoachPrewarms();
+    cancelPendingCoachAttempt();
+    setRetryTarget(undefined);
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
     setFeedbackByPly((items) =>
@@ -1549,6 +1694,8 @@ export function App() {
   const redo = () => {
     if (!hasFuture) return;
     cancelCoachPrewarms();
+    cancelPendingCoachAttempt();
+    setRetryTarget(undefined);
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
     setFeedbackByPly((items) =>
@@ -1589,6 +1736,8 @@ export function App() {
     if (!window.confirm("¿Abandonar esta partida y borrar su guardado local?"))
       return;
     cancelCoachPrewarms();
+    cancelPendingCoachAttempt();
+    setRetryTarget(undefined);
     setProvisionalMoveQuality(undefined);
     coachQueueRef.current?.invalidate();
     generation.current += 1;
@@ -1616,12 +1765,18 @@ export function App() {
   };
 
   const applyWorkspaceLineChange = (nextWorkspace: SessionWorkspace) => {
-    const nextLine = activeSessionLine(nextWorkspace);
+    const pending = coachPendingRef.current;
+    const finalizedWorkspace = pending
+      ? finalizePendingCoachAttempt(nextWorkspace, pending.identity)
+      : nextWorkspace;
+    const nextLine = activeSessionLine(finalizedWorkspace);
     cancelCoachPrewarms();
+    if (pending) clearPendingCoachState(pending.identity);
+    setRetryTarget(undefined);
     coachQueueRef.current?.invalidate();
     generation.current += 1;
     setProvisionalMoveQuality(clearProvisionalForLineChange());
-    setWorkspace(nextWorkspace);
+    setWorkspace(finalizedWorkspace);
     setFeedback(
       nextLine.feedbackByPly.find(
         (entry) => entry.historyIndex === nextLine.timeline.cursor - 1,
@@ -1638,6 +1793,8 @@ export function App() {
     try {
       const imported = loadPgn(await file.text());
       cancelCoachPrewarms();
+      cancelPendingCoachAttempt();
+      setRetryTarget(undefined);
       setProvisionalMoveQuality(undefined);
       coachQueueRef.current?.invalidate();
       generation.current += 1;
@@ -1685,6 +1842,7 @@ export function App() {
     );
     setCoachSlow(false);
     setCoachPending(undefined);
+    setRetryTarget(retryAnalysisTarget(workspace, adviceEntry));
     setCoachRetry((attempt) => attempt + 1);
   };
 

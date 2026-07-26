@@ -25,13 +25,16 @@ import {
   describeGameTurnStatus,
   initialOpponentNameForMode,
   isAbortErrorLike,
+  isRetryAttemptInFlight,
   isCurrentCoachRequest,
   isRetryTargetActive,
   opponentNameForBackend,
   readCurrentBuildId,
   retryAnalysisTarget,
+  rebuildCoachRetryTurn,
   reportCoachFailureDebug,
   shouldWaitForCoachRetry,
+  shouldStartCoachRetry,
   shouldReplacePendingFeedback,
   workspaceTransitionNotice,
 } from "./App";
@@ -429,6 +432,38 @@ describe("coach feedback states", () => {
     expect(
       isRetryTargetActive(createTrialLine(workspace, "other"), target),
     ).toBe(false);
+
+    const rebuilt = rebuildCoachRetryTurn(workspace, target);
+    expect(rebuilt.before.fen).toBe(createInitialGame().fen);
+    expect(rebuilt.after.fen).toBe(e4.fen);
+    expect(rebuilt.after.history.at(-1)?.uci).toBe("e2e4");
+    expect(rebuilt.after.history).toHaveLength(1);
+  });
+
+  it("does not enqueue a second retry while the exact retry request is still in flight", () => {
+    const target = {
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      uci: "e2e4",
+      beforeFen: createInitialGame().fen,
+      afterFen: applyMove(createInitialGame(), { from: "e2", to: "e4" }).fen,
+      autoAttempts: 1,
+      attemptRequestId: "coach-retry-1",
+    };
+    const pending = {
+      identity: {
+        requestId: "coach-retry-1",
+      },
+    };
+
+    expect(isRetryAttemptInFlight(target, pending)).toBe(true);
+    expect(shouldStartCoachRetry(target, pending, "white", "white")).toBe(
+      false,
+    );
+    expect(shouldStartCoachRetry(target, undefined, "white", "white")).toBe(
+      true,
+    );
   });
 
   it("finalizes the origin pending retry after switching lines and ignores deleted or newer entries", () => {

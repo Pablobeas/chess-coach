@@ -2,10 +2,10 @@ import {
   createInitialGame,
   formatMoveSequence,
   loadPgn,
-  loadPosition,
   listCaptures,
   replayHistory,
   restoreSession,
+  sessionAtPly,
   type GameSession,
   type PieceType,
   type PlayerColor,
@@ -307,6 +307,49 @@ export interface RetryAnalysisTarget {
   readonly beforeFen: string;
   readonly afterFen: string;
   readonly autoAttempts: number;
+  /** Set only while this retry request is actively queued or running. */
+  readonly attemptRequestId?: string;
+}
+
+export function rebuildCoachRetryTurn(
+  workspace: SessionWorkspace,
+  target: RetryAnalysisTarget,
+): { readonly before: GameSession; readonly after: GameSession } {
+  if (!isRetryTargetActive(workspace, target))
+    throw new Error("Retry target is no longer active");
+  const session = activeSessionLine(workspace).timeline.session;
+  const before = sessionAtPly(session, target.historyIndex);
+  const after = sessionAtPly(session, target.historyIndex + 1);
+  if (
+    before.fen !== target.beforeFen ||
+    after.fen !== target.afterFen ||
+    after.history.at(-1)?.uci !== target.uci
+  )
+    throw new Error("Retry target no longer reconstructs its original move");
+  return { before, after };
+}
+
+export function isRetryAttemptInFlight(
+  target: Pick<RetryAnalysisTarget, "attemptRequestId"> | undefined,
+  pending: { readonly identity: { readonly requestId: string } } | undefined,
+): boolean {
+  return (
+    target?.attemptRequestId !== undefined &&
+    target.attemptRequestId === pending?.identity.requestId
+  );
+}
+
+export function shouldStartCoachRetry(
+  target: RetryAnalysisTarget | undefined,
+  pending: { readonly identity: { readonly requestId: string } } | undefined,
+  gameTurn: PlayerColor,
+  playerColor: PlayerColor,
+): boolean {
+  return (
+    target !== undefined &&
+    !shouldWaitForCoachRetry(target, gameTurn, playerColor) &&
+    !isRetryAttemptInFlight(target, pending)
+  );
 }
 
 export function retryAnalysisTarget(
@@ -1443,7 +1486,16 @@ export function App() {
       setRetryTarget(undefined);
       return;
     }
-    if (shouldWaitForCoachRetry(retryTarget, game.turn, playerColor)) return;
+    if (
+      retryTarget &&
+      !shouldStartCoachRetry(
+        retryTarget,
+        coachPendingRef.current,
+        game.turn,
+        playerColor,
+      )
+    )
+      return;
     const retriedEntry = retryTarget
       ? replayHistory(game)[retryTarget.historyIndex]
       : undefined;
@@ -1466,10 +1518,11 @@ export function App() {
     )
       return;
 
-    const after = retryTarget ? loadPosition(retryTarget.afterFen) : game;
-    const before = retryTarget
-      ? loadPosition(retryTarget.beforeFen)
-      : undoMove(after);
+    const retryTurn = retryTarget
+      ? rebuildCoachRetryTurn(workspace, retryTarget)
+      : undefined;
+    const after = retryTurn?.after ?? game;
+    const before = retryTurn?.before ?? undoMove(after);
     const actor = retryTarget
       ? "user"
       : lastMoveColor === playerColor
@@ -1516,6 +1569,17 @@ export function App() {
         ? (coachPendingRef.current?.startedAt ?? Date.now())
         : Date.now(),
     });
+    if (retryTarget) {
+      setRetryTarget((current) =>
+        current?.lineId === analysisIdentity.lineId &&
+        current.historyIndex === analysisIdentity.historyIndex &&
+        current.uci === analysisIdentity.uci &&
+        current.beforeFen === analysisIdentity.beforeFen &&
+        current.afterFen === analysisIdentity.afterFen
+          ? { ...current, attemptRequestId: analysisIdentity.requestId }
+          : current,
+      );
+    }
     setFeedbackByPly((entries) => [
       ...entries.filter((entry) => entry.historyIndex !== historyIndex),
       { ...identity, status: "pending" },
@@ -1715,7 +1779,14 @@ export function App() {
           autoAttempt: retryTarget?.autoAttempts ?? 0,
           action: failureAction,
         });
-        if (failureAction === "stale") return;
+        if (failureAction === "stale") {
+          setRetryTarget((current) =>
+            current?.attemptRequestId === analysisIdentity.requestId
+              ? undefined
+              : current,
+          );
+          return;
+        }
         if (
           failureAction === "auto-retry" ||
           failureAction === "wait-for-player-turn"

@@ -111,7 +111,7 @@ import {
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
 const COACH_SLOW_THRESHOLD_MS = 4_000;
-const COACH_WATCHDOG_MS = 20_000;
+export const COACH_DEADLINE_MS = 18_000;
 export type CoachFailureStage =
   "before" | "after" | "analyzeTurn" | "acceptance";
 export type CoachFailureAction =
@@ -1046,23 +1046,38 @@ export function App() {
   const generation = useRef(0);
   const coachRequestSequence = useRef(0);
   const activeCoachRequestId = useRef<string | undefined>(undefined);
+  const coachAttemptControllersRef = useRef(new Map<string, AbortController>());
+  const coachAttemptDeadlinesRef = useRef(
+    new Map<string, ReturnType<typeof window.setTimeout>>(),
+  );
   const [coachPending, setCoachPending] = useState<{
     readonly identity: AnalysisRequestIdentity;
     readonly startedAt: number;
   }>();
   const coachPendingRef = useRef<typeof coachPending>(undefined);
   coachPendingRef.current = coachPending;
+  const releaseCoachAttempt = (requestId: string) => {
+    const deadline = coachAttemptDeadlinesRef.current.get(requestId);
+    if (deadline !== undefined) window.clearTimeout(deadline);
+    coachAttemptDeadlinesRef.current.delete(requestId);
+    coachAttemptControllersRef.current.delete(requestId);
+  };
+  const abortCoachAttempt = (requestId: string) => {
+    const controller = coachAttemptControllersRef.current.get(requestId);
+    controller?.abort();
+    releaseCoachAttempt(requestId);
+  };
   const clearPendingCoachState = (identity: AnalysisRequestIdentity) => {
+    const wasCurrent =
+      coachPendingRef.current?.identity.requestId === identity.requestId;
+    if (wasCurrent) coachPendingRef.current = undefined;
     setCoachPending((current) =>
       current?.identity.requestId === identity.requestId ? undefined : current,
     );
-    setCoachSlow((current) =>
-      coachPendingRef.current?.identity.requestId === identity.requestId
-        ? false
-        : current,
-    );
+    if (wasCurrent) setCoachSlow(false);
     if (activeCoachRequestId.current === identity.requestId)
       activeCoachRequestId.current = undefined;
+    releaseCoachAttempt(identity.requestId);
   };
   const finalizeStaleCoachAttempt = (identity: AnalysisRequestIdentity) => {
     // A newer retry may be analyzing the same ply. Feedback does not carry a
@@ -1070,6 +1085,7 @@ export function App() {
     // transition that ply to unavailable.
     if (coachPendingRef.current?.identity.requestId !== identity.requestId)
       return;
+    abortCoachAttempt(identity.requestId);
     setWorkspace((current) => finalizePendingCoachAttempt(current, identity));
     setProvisionalMoveQuality((current) =>
       current?.historyIndex === identity.historyIndex &&
@@ -1078,9 +1094,28 @@ export function App() {
         : current,
     );
     setRetryTarget((current) =>
-      current?.attemptRequestId === identity.requestId ? undefined : current,
+      clearExpiredCoachRetryTarget(current, identity),
     );
     clearPendingCoachState(identity);
+  };
+  const scheduleCoachDeadline = (
+    identity: AnalysisRequestIdentity,
+    startedAt: number,
+  ) => {
+    abortCoachAttempt(identity.requestId);
+    const controller = new AbortController();
+    coachAttemptControllersRef.current.set(identity.requestId, controller);
+    const deadline = window.setTimeout(
+      () => {
+        if (coachPendingRef.current?.identity.requestId !== identity.requestId)
+          return;
+        controller.abort();
+        finalizeStaleCoachAttempt(identity);
+      },
+      coachRemainingDelay(COACH_DEADLINE_MS, startedAt, Date.now()),
+    );
+    coachAttemptDeadlinesRef.current.set(identity.requestId, deadline);
+    return controller;
   };
   const cancelPendingCoachAttempt = () => {
     const pending = coachPendingRef.current;
@@ -1247,42 +1282,8 @@ export function App() {
       () => setCoachSlow(true),
       coachRemainingDelay(COACH_SLOW_THRESHOLD_MS, coachPending.startedAt, now),
     );
-    const watchdog = window.setTimeout(
-      () => {
-        const { identity } = coachPending;
-        if (!isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
-          return;
-        if (
-          !acceptsAnalysisResult(
-            workspaceRef.current,
-            identity,
-            identity.requestId,
-          )
-        ) {
-          finalizeStaleCoachAttempt(identity);
-          return;
-        }
-        setFeedbackByPly((entries) =>
-          entries.map((entry) =>
-            entry.historyIndex === identity.historyIndex &&
-            entry.uci === identity.uci &&
-            entry.beforeFen === identity.beforeFen &&
-            entry.afterFen === identity.afterFen &&
-            entry.status === "pending"
-              ? { ...entry, status: "unavailable" }
-              : entry,
-          ),
-        );
-        clearPendingCoachState(identity);
-        setRetryTarget((current) =>
-          clearExpiredCoachRetryTarget(current, identity),
-        );
-      },
-      coachRemainingDelay(COACH_WATCHDOG_MS, coachPending.startedAt, now),
-    );
     return () => {
       window.clearTimeout(slowTimer);
-      window.clearTimeout(watchdog);
     };
   }, [coachPending]);
   const destinations = useMemo(
@@ -1411,6 +1412,8 @@ export function App() {
       disposeEngineRef(engineRef);
       disposeEngineRef(coachEngineRef);
       cancelCoachPrewarms();
+      for (const requestId of coachAttemptControllersRef.current.keys())
+        abortCoachAttempt(requestId);
       coachQueueRef.current?.dispose();
     },
     [],
@@ -1648,12 +1651,25 @@ export function App() {
           }
         : createAnalysisRequestIdentity(workspace, requestId);
     activeCoachRequestId.current = analysisIdentity.requestId;
-    setCoachPending({
+    const previousAttemptId = coachPendingRef.current?.identity.requestId;
+    const startedAt = retryTarget
+      ? (coachPendingRef.current?.startedAt ?? Date.now())
+      : Date.now();
+    const pendingAttempt = {
       identity: analysisIdentity,
-      startedAt: retryTarget
-        ? (coachPendingRef.current?.startedAt ?? Date.now())
-        : Date.now(),
-    });
+      startedAt,
+    };
+    coachPendingRef.current = pendingAttempt;
+    setCoachPending(pendingAttempt);
+    if (
+      previousAttemptId !== undefined &&
+      previousAttemptId !== analysisIdentity.requestId
+    )
+      releaseCoachAttempt(previousAttemptId);
+    const attemptController = scheduleCoachDeadline(
+      analysisIdentity,
+      startedAt,
+    );
     if (retryTarget) {
       setRetryTarget((current) =>
         current?.lineId === analysisIdentity.lineId &&
@@ -1672,6 +1688,10 @@ export function App() {
     setProvisionalMoveQuality(undefined);
 
     coachQueueRef.current?.enqueue(async (signal) => {
+      const abortFromQueue = () => attemptController.abort();
+      signal.addEventListener("abort", abortFromQueue, { once: true });
+      const attemptSignal = attemptController.signal;
+      if (signal.aborted) attemptController.abort();
       const engine = (coachEngineRef.current ??=
         createBrowserStockfishEngine());
       const searchPlan = coachSearchPlan(settings.enginePreset);
@@ -1693,7 +1713,7 @@ export function App() {
           }
           latestAfterProgress = progress;
           if (
-            signal.aborted ||
+            attemptSignal.aborted ||
             progress.depth < MINIMUM_PROVISIONAL_QUALITY_DEPTH ||
             progress.depth <= lastAssessedDepth
           )
@@ -1717,7 +1737,7 @@ export function App() {
                 requireCompleteVariations: true,
               },
             );
-            if (!assessment || signal.aborted) return;
+            if (!assessment || attemptSignal.aborted) return;
             lastAssessedDepth = progress.depth;
             setProvisionalMoveQuality((current) =>
               updateProvisionalMoveQuality(current, {
@@ -1743,7 +1763,7 @@ export function App() {
               multiPv: searchPlan.beforeMultiPv,
               limit: searchPlan.limit,
             },
-            signal,
+            attemptSignal,
           )
           .then((result) => {
             beforeForProgress = result;
@@ -1765,7 +1785,7 @@ export function App() {
               multiPv: searchPlan.afterMultiPv,
               limit: searchPlan.limit,
             },
-            signal,
+            attemptSignal,
             publishProvisional,
           )
           .catch((error: unknown) => {
@@ -1790,7 +1810,7 @@ export function App() {
           beforeLines: beforeResult.lines,
           afterLines: afterResult.lines,
         });
-        if (signal.aborted) {
+        if (attemptSignal.aborted) {
           finalizeStaleCoachAttempt(analysisIdentity);
           return;
         }
@@ -1852,7 +1872,7 @@ export function App() {
           );
         const failureAction = coachFailureActionForTurn(
           error,
-          signal.aborted,
+          attemptSignal.aborted,
           identityActive,
           retryTarget?.autoAttempts ?? 0,
           currentGameTurnRef.current === playerColor,
@@ -1860,7 +1880,7 @@ export function App() {
         reportCoachFailureDebug({
           stage: failureStage,
           error,
-          signalAborted: signal.aborted,
+          signalAborted: attemptSignal.aborted,
           identityActive,
           autoAttempt: retryTarget?.autoAttempts ?? 0,
           action: failureAction,
@@ -1906,6 +1926,8 @@ export function App() {
             ? undefined
             : current,
         );
+      } finally {
+        signal.removeEventListener("abort", abortFromQueue);
       }
     });
   }, [

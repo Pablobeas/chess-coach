@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GameTurnStatus,
   AdvicePanel,
+  COACH_DEADLINE_MS,
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
@@ -428,7 +429,7 @@ describe("coach feedback states", () => {
     ).toContain("igualada");
   });
 
-  it("does not let watchdog A clear a newer pending request B", () => {
+  it("does not let deadline A clear a newer pending request B", () => {
     const pendingB = { identity: { requestId: "coach-b" } };
     expect(isCurrentCoachRequest(pendingB, "coach-a")).toBe(false);
     expect(isCurrentCoachRequest(pendingB, "coach-b")).toBe(true);
@@ -486,13 +487,14 @@ describe("coach feedback states", () => {
     );
   });
 
-  it("preserves the original 20-second watchdog budget across a deferred retry", () => {
-    expect(coachRemainingDelay(20_000, 0, 5_000)).toBe(15_000);
-    expect(coachRemainingDelay(20_000, 5_000, 20_000)).toBe(5_000);
-    expect(coachRemainingDelay(20_000, 5_000, 30_000)).toBe(0);
+  it("preserves the 18-second analysis deadline across a deferred retry", () => {
+    expect(COACH_DEADLINE_MS).toBe(18_000);
+    expect(coachRemainingDelay(COACH_DEADLINE_MS, 0, 5_000)).toBe(13_000);
+    expect(coachRemainingDelay(COACH_DEADLINE_MS, 5_000, 18_000)).toBe(5_000);
+    expect(coachRemainingDelay(COACH_DEADLINE_MS, 5_000, 30_000)).toBe(0);
   });
 
-  it("does not revive a deferred retry after its 20-second watchdog has expired", () => {
+  it("does not revive a deferred retry after its analysis deadline has expired", () => {
     const target = {
       lineId: "main",
       lineRole: "main" as const,
@@ -513,7 +515,7 @@ describe("coach feedback states", () => {
 
     expect(expired).toBeUndefined();
     // Even once the opponent's turn finishes, there is no pending retry to
-    // start after the watchdog has declared the analysis unavailable.
+    // start after the deadline has declared the analysis unavailable.
     expect(shouldWaitForCoachRetry(expired, "white", "white")).toBe(false);
   });
 

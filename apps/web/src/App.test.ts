@@ -15,9 +15,12 @@ import {
   MobileEvaluationBar,
   finalizePendingCoachAttempt,
   browserOpponentModeForBuild,
+  clearExpiredCoachRetryTarget,
   coachDebugEnabled,
   coachFailureAction,
+  coachFailureActionForTurn,
   coachFailureStageForPrimaryLines,
+  coachRemainingDelay,
   canPlayBoard,
   describeGameTurnStatus,
   initialOpponentNameForMode,
@@ -28,6 +31,7 @@ import {
   readCurrentBuildId,
   retryAnalysisTarget,
   reportCoachFailureDebug,
+  shouldWaitForCoachRetry,
   shouldReplacePendingFeedback,
   workspaceTransitionNotice,
 } from "./App";
@@ -250,6 +254,66 @@ describe("coach feedback states", () => {
     expect(coachFailureAction({ name: "OtherError" }, false, true, 0)).toBe(
       "unavailable",
     );
+  });
+
+  it("defers repeated internal preemptions until the opponent has completed its turn", () => {
+    const internalAbort = new DOMException("preempted", "AbortError");
+    const waitingTarget = {
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      uci: "e2e4",
+      beforeFen: "before",
+      afterFen: "after",
+      autoAttempts: 1,
+    };
+
+    expect(
+      coachFailureActionForTurn(internalAbort, false, true, 0, false),
+    ).toBe("wait-for-player-turn");
+    expect(
+      coachFailureActionForTurn(internalAbort, false, true, 1, false),
+    ).toBe("wait-for-player-turn");
+    expect(shouldWaitForCoachRetry(waitingTarget, "black", "white")).toBe(true);
+    // Once the rival has replied, the exact retry target becomes eligible and
+    // the normal pipeline can resolve it to ready.
+    expect(shouldWaitForCoachRetry(waitingTarget, "white", "white")).toBe(
+      false,
+    );
+    expect(coachFailureActionForTurn(internalAbort, false, true, 1, true)).toBe(
+      "unavailable",
+    );
+  });
+
+  it("preserves the original 20-second watchdog budget across a deferred retry", () => {
+    expect(coachRemainingDelay(20_000, 0, 5_000)).toBe(15_000);
+    expect(coachRemainingDelay(20_000, 5_000, 20_000)).toBe(5_000);
+    expect(coachRemainingDelay(20_000, 5_000, 30_000)).toBe(0);
+  });
+
+  it("does not revive a deferred retry after its 20-second watchdog has expired", () => {
+    const target = {
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      uci: "e2e4",
+      beforeFen: "before",
+      afterFen: "after",
+      autoAttempts: 1,
+    };
+    const expired = clearExpiredCoachRetryTarget(target, {
+      lineId: "main",
+      lineRole: "main" as const,
+      historyIndex: 0,
+      uci: "e2e4",
+      beforeFen: "before",
+      afterFen: "after",
+    });
+
+    expect(expired).toBeUndefined();
+    // Even once the opponent's turn finishes, there is no pending retry to
+    // start after the watchdog has declared the analysis unavailable.
+    expect(shouldWaitForCoachRetry(expired, "white", "white")).toBe(false);
   });
 
   it("only emits sanitized coach failure diagnostics when explicitly enabled", () => {

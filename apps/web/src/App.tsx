@@ -110,9 +110,12 @@ import {
 
 const initialSnapshot = createInitialGame();
 type EngineState = "idle" | "thinking" | "ready" | "error";
+const COACH_SLOW_THRESHOLD_MS = 4_000;
+const COACH_WATCHDOG_MS = 20_000;
 export type CoachFailureStage =
   "before" | "after" | "analyzeTurn" | "acceptance";
-export type CoachFailureAction = "auto-retry" | "unavailable" | "stale";
+export type CoachFailureAction =
+  "auto-retry" | "wait-for-player-turn" | "unavailable" | "stale";
 
 const FEN_IN_ERROR_MESSAGE =
   /\b(?:[prnbqkPRNBQK1-8]+\/){7}[prnbqkPRNBQK1-8]+\s[wb]\s(?:-|[KQkq]+)\s(?:-|[a-h][36])\s\d+\s\d+\b/;
@@ -207,6 +210,71 @@ export function coachFailureAction(
   if (!identityActive || outerSignalAborted) return "stale";
   if (isAbortErrorLike(error) && autoAttempts < 1) return "auto-retry";
   return "unavailable";
+}
+
+export function coachFailureActionForTurn(
+  error: unknown,
+  outerSignalAborted: boolean,
+  identityActive: boolean,
+  autoAttempts: number,
+  isPlayerTurn: boolean,
+): CoachFailureAction {
+  if (!identityActive || outerSignalAborted) return "stale";
+  if (isAbortErrorLike(error) && !isPlayerTurn) return "wait-for-player-turn";
+  return coachFailureAction(
+    error,
+    outerSignalAborted,
+    identityActive,
+    autoAttempts,
+  );
+}
+
+export function shouldWaitForCoachRetry(
+  retryTarget: Pick<RetryAnalysisTarget, "autoAttempts"> | undefined,
+  gameTurn: PlayerColor,
+  playerColor: PlayerColor,
+): boolean {
+  return (
+    retryTarget !== undefined &&
+    retryTarget.autoAttempts > 0 &&
+    gameTurn !== playerColor
+  );
+}
+
+export function clearExpiredCoachRetryTarget(
+  target: RetryAnalysisTarget | undefined,
+  identity: Pick<
+    AnalysisRequestIdentity,
+    | "lineId"
+    | "lineRole"
+    | "fork"
+    | "historyIndex"
+    | "uci"
+    | "beforeFen"
+    | "afterFen"
+  >,
+): RetryAnalysisTarget | undefined {
+  if (!target) return undefined;
+  const sameFork =
+    target.fork?.lineId === identity.fork?.lineId &&
+    target.fork?.ply === identity.fork?.ply;
+  return target.lineId === identity.lineId &&
+    target.lineRole === identity.lineRole &&
+    sameFork &&
+    target.historyIndex === identity.historyIndex &&
+    target.uci === identity.uci &&
+    target.beforeFen === identity.beforeFen &&
+    target.afterFen === identity.afterFen
+    ? undefined
+    : target;
+}
+
+export function coachRemainingDelay(
+  budgetMs: number,
+  startedAt: number,
+  now: number,
+): number {
+  return Math.max(0, budgetMs - (now - startedAt));
 }
 
 export function isAbortErrorLike(error: unknown): boolean {
@@ -924,6 +992,8 @@ export function App() {
     () => createLocalGame(sessionAtNavigationCursor(timeline)),
     [timeline],
   );
+  const currentGameTurnRef = useRef(game.turn);
+  currentGameTurnRef.current = game.turn;
   const hasFuture = timeline.cursor < timeline.session.history.length;
   const isBrowsingHistory = hasFuture;
   const previousHistoryLength = useRef(game.history.length);
@@ -1038,38 +1108,50 @@ export function App() {
       setCoachSlow(false);
       return;
     }
-    const slowTimer = window.setTimeout(() => setCoachSlow(true), 4_000);
-    const watchdog = window.setTimeout(() => {
-      const { identity } = coachPending;
-      if (!isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
-        return;
-      if (
-        !acceptsAnalysisResult(
-          workspaceRef.current,
-          identity,
-          identity.requestId,
+    const now = Date.now();
+    const slowTimer = window.setTimeout(
+      () => setCoachSlow(true),
+      coachRemainingDelay(COACH_SLOW_THRESHOLD_MS, coachPending.startedAt, now),
+    );
+    const watchdog = window.setTimeout(
+      () => {
+        const { identity } = coachPending;
+        if (!isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
+          return;
+        if (
+          !acceptsAnalysisResult(
+            workspaceRef.current,
+            identity,
+            identity.requestId,
+          )
         )
-      )
-        return;
-      setFeedbackByPly((entries) =>
-        entries.map((entry) =>
-          entry.historyIndex === identity.historyIndex &&
-          entry.uci === identity.uci &&
-          entry.beforeFen === identity.beforeFen &&
-          entry.afterFen === identity.afterFen &&
-          entry.status === "pending"
-            ? { ...entry, status: "unavailable" }
-            : entry,
-        ),
-      );
-      setCoachPending((current) =>
-        current?.identity.requestId === identity.requestId
-          ? undefined
-          : current,
-      );
-      if (isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
-        setCoachSlow(false);
-    }, 20_000);
+          return;
+        setFeedbackByPly((entries) =>
+          entries.map((entry) =>
+            entry.historyIndex === identity.historyIndex &&
+            entry.uci === identity.uci &&
+            entry.beforeFen === identity.beforeFen &&
+            entry.afterFen === identity.afterFen &&
+            entry.status === "pending"
+              ? { ...entry, status: "unavailable" }
+              : entry,
+          ),
+        );
+        setCoachPending((current) =>
+          current?.identity.requestId === identity.requestId
+            ? undefined
+            : current,
+        );
+        if (activeCoachRequestId.current === identity.requestId)
+          activeCoachRequestId.current = undefined;
+        setRetryTarget((current) =>
+          clearExpiredCoachRetryTarget(current, identity),
+        );
+        if (isCurrentCoachRequest(coachPendingRef.current, identity.requestId))
+          setCoachSlow(false);
+      },
+      coachRemainingDelay(COACH_WATCHDOG_MS, coachPending.startedAt, now),
+    );
     return () => {
       window.clearTimeout(slowTimer);
       window.clearTimeout(watchdog);
@@ -1361,6 +1443,7 @@ export function App() {
       setRetryTarget(undefined);
       return;
     }
+    if (shouldWaitForCoachRetry(retryTarget, game.turn, playerColor)) return;
     const retriedEntry = retryTarget
       ? replayHistory(game)[retryTarget.historyIndex]
       : undefined;
@@ -1427,7 +1510,12 @@ export function App() {
           }
         : createAnalysisRequestIdentity(workspace, requestId);
     activeCoachRequestId.current = analysisIdentity.requestId;
-    setCoachPending({ identity: analysisIdentity, startedAt: Date.now() });
+    setCoachPending({
+      identity: analysisIdentity,
+      startedAt: retryTarget
+        ? (coachPendingRef.current?.startedAt ?? Date.now())
+        : Date.now(),
+    });
     setFeedbackByPly((entries) => [
       ...entries.filter((entry) => entry.historyIndex !== historyIndex),
       { ...identity, status: "pending" },
@@ -1612,11 +1700,12 @@ export function App() {
             analysisIdentity,
             analysisIdentity.requestId,
           );
-        const failureAction = coachFailureAction(
+        const failureAction = coachFailureActionForTurn(
           error,
           signal.aborted,
           identityActive,
           retryTarget?.autoAttempts ?? 0,
+          currentGameTurnRef.current === playerColor,
         );
         reportCoachFailureDebug({
           stage: failureStage,
@@ -1627,7 +1716,10 @@ export function App() {
           action: failureAction,
         });
         if (failureAction === "stale") return;
-        if (failureAction === "auto-retry") {
+        if (
+          failureAction === "auto-retry" ||
+          failureAction === "wait-for-player-turn"
+        ) {
           setRetryTarget({
             lineId: analysisIdentity.lineId,
             lineRole: analysisIdentity.lineRole,
@@ -1638,7 +1730,7 @@ export function App() {
             uci: move.uci,
             beforeFen: before.fen,
             afterFen: after.fen,
-            autoAttempts: 1,
+            autoAttempts: Math.max(retryTarget?.autoAttempts ?? 0, 1),
           });
           setCoachRetry((attempt) => attempt + 1);
           return;

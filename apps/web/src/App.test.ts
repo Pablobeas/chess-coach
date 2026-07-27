@@ -34,9 +34,11 @@ import {
   isRetryTargetActive,
   opponentNameForBackend,
   opponentResponseStillMatches,
+  postgameAnalysisPositionsForTask,
   postgameReviewAutoOpenDelayMs,
   postgameReviewAutoOpenCandidate,
   readCurrentBuildId,
+  resolvePostgameReviewTask,
   retryAnalysisTarget,
   rebuildCoachRetryTurn,
   reportCoachFailureDebug,
@@ -55,6 +57,21 @@ import {
   acceptsAnalysisResult,
   syncActiveLineSession,
 } from "./lineTransitions";
+import { createPostgameReviewStateV1 } from "./postgameReview";
+
+function playMate(uciMoves: readonly string[]) {
+  return uciMoves.reduce(
+    (session, uci) =>
+      applyMove(session, {
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        ...(uci.length === 5
+          ? { promotion: uci[4] as "q" | "r" | "b" | "n" }
+          : {}),
+      }),
+    createInitialGame(),
+  );
+}
 
 describe("opponent backend labels", () => {
   it("never represents Stockfish as an exact Elo opponent", () => {
@@ -285,6 +302,148 @@ describe("post-game review orchestration", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("plans terminal mate review analysis without ever requesting the terminal fen", async () => {
+    const mate = playMate(["f2f3", "e7e5", "g2g4", "d8h4"]);
+    const review = createPostgameReviewStateV1({
+      session: mate,
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    const finalMove = review.snapshot.moves.at(-1)!;
+    const task = {
+      kind: "terminal-checkmate" as const,
+      reviewId: "review-a",
+      moveIndex: finalMove.index,
+      color: "black" as const,
+      actor: "user" as const,
+      beforeFen: finalMove.beforeFen,
+      afterFen: finalMove.afterFen,
+      priority: "normal" as const,
+    };
+    const analyzePosition = vi.fn(async () => ({
+      id: `review-a:before:${finalMove.index}`,
+      fen: finalMove.beforeFen,
+      backend: "deterministic" as const,
+      perspective: "black" as const,
+      depth: 12,
+      nodes: 1,
+      lines: [
+        {
+          rank: 1,
+          moves: [],
+          score: { kind: "centipawns" as const, value: 90 },
+        },
+      ],
+    }));
+
+    expect(postgameAnalysisPositionsForTask(task)).toEqual([
+      {
+        id: `review-a:before:${finalMove.index}`,
+        fen: finalMove.beforeFen,
+        perspective: "black",
+      },
+    ]);
+    const evidence = await resolvePostgameReviewTask({
+      task,
+      review,
+      analyzePosition,
+    });
+
+    expect(analyzePosition).toHaveBeenCalledTimes(1);
+    expect(analyzePosition).toHaveBeenCalledWith({
+      id: `review-a:before:${finalMove.index}`,
+      fen: finalMove.beforeFen,
+      perspective: "black",
+    });
+    expect(analyzePosition).not.toHaveBeenCalledWith(
+      expect.objectContaining({ fen: review.snapshot.terminalFen }),
+    );
+    expect(evidence?.kind).toBe("terminal-checkmate");
+  });
+
+  it("plans normal post-game review analysis with both before and after positions", async () => {
+    const mate = playMate([
+      "e2e4",
+      "e7e5",
+      "d1h5",
+      "b8c6",
+      "f1c4",
+      "g8f6",
+      "h5f7",
+    ]);
+    const review = createPostgameReviewStateV1({
+      session: mate,
+      lineId: "main",
+      playerColor: "white",
+      feedbackByPly: [],
+    });
+    const move = review.snapshot.moves[0]!;
+    const task = {
+      kind: "decision" as const,
+      reviewId: "review-b",
+      moveIndex: move.index,
+      color: "white" as const,
+      actor: "user" as const,
+      beforeFen: move.beforeFen,
+      afterFen: move.afterFen,
+      priority: "normal" as const,
+    };
+    const analyzePosition = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: `review-b:before:${move.index}`,
+        fen: move.beforeFen,
+        backend: "deterministic" as const,
+        perspective: "white" as const,
+        depth: 12,
+        nodes: 1,
+        lines: [
+          {
+            rank: 1,
+            moves: [],
+            score: { kind: "centipawns" as const, value: 50 },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: `review-b:after:${move.index}`,
+        fen: move.afterFen,
+        backend: "deterministic" as const,
+        perspective: "white" as const,
+        depth: 12,
+        nodes: 1,
+        lines: [
+          {
+            rank: 1,
+            moves: ["e2e4"],
+            score: { kind: "centipawns" as const, value: 20 },
+          },
+        ],
+      });
+
+    expect(postgameAnalysisPositionsForTask(task)).toEqual([
+      {
+        id: `review-b:before:${move.index}`,
+        fen: move.beforeFen,
+        perspective: "white",
+      },
+      {
+        id: `review-b:after:${move.index}`,
+        fen: move.afterFen,
+        perspective: "white",
+      },
+    ]);
+    const evidence = await resolvePostgameReviewTask({
+      task,
+      review,
+      analyzePosition,
+    });
+
+    expect(analyzePosition).toHaveBeenCalledTimes(2);
+    expect(evidence?.kind).toBe("decision");
   });
 });
 

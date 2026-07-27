@@ -6,6 +6,7 @@ import {
   replayHistory,
 } from "@chess-coach/chess-core";
 import type { CoachTurnRecord } from "@chess-coach/coach";
+import { completeTerminalCheckmateEvidenceV1 } from "@chess-coach/coach";
 import {
   DEFAULT_SETTINGS,
   clearStoredGame,
@@ -832,6 +833,47 @@ describe("local persistence", () => {
     const restored = loadStoredGame(storage);
     expect(restored?.workspace.postgameReview).toEqual(review);
     expect(restored?.postgameReview).toEqual(review);
+  });
+
+  it("round-trips terminal-checkmate postgame evidence through the version 6 union", () => {
+    const storage = memoryStorage();
+    const mate = foolsMate();
+    const baseReview = createPostgameReviewStateV1({
+      session: mate,
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    const terminal = completeTerminalCheckmateEvidenceV1(
+      baseReview.snapshot,
+      "black",
+      {
+        rank: 1,
+        moves: [],
+        score: { kind: "centipawns", value: 120 },
+      },
+    );
+    const review = {
+      ...baseReview,
+      evidence: [terminal],
+      summary: baseReview.summary,
+      progress: { completed: 1, total: 4 },
+    };
+
+    saveStoredGame(
+      {
+        ...createSessionWorkspace(mate),
+        postgameReview: review,
+      },
+      DEFAULT_SETTINGS,
+      storage,
+    );
+
+    const restored = loadStoredGame(storage);
+    expect(restored?.workspace.postgameReview?.evidence[0]).toEqual(terminal);
+    expect(restored?.postgameReview?.evidence[0]?.kind).toBe(
+      "terminal-checkmate",
+    );
   });
 
   it("adds the default Maia-3 Elo when migrating a version two game", () => {

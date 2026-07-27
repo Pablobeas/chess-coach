@@ -61,8 +61,9 @@ export interface FinalLineSnapshotV1 {
  * Scores are calibrated only to compare decisions; they are not probabilities
  * shown to a player and are always marked by their source in the result.
  */
-export interface PostgamePositionEvidenceV1 {
+export interface PostgameDecisionEvidenceV1 {
   readonly schemaVersion: typeof POSTGAME_POSITION_EVIDENCE_SCHEMA_VERSION;
+  readonly kind: "decision";
   readonly moveIndex: number;
   readonly beforeFen: string;
   readonly afterFen: string;
@@ -71,6 +72,31 @@ export interface PostgamePositionEvidenceV1 {
   readonly bestLine: EngineLine;
   readonly playedLine: EngineLine;
 }
+
+/**
+ * The mating ply has no legal next position to ask the engine about. This
+ * evidence deliberately carries the pre-move best analysis plus the exact,
+ * independently validated terminal outcome instead of fabricating an
+ * after-line or a principal variation.
+ */
+export interface PostgameTerminalCheckmateEvidenceV1 {
+  readonly schemaVersion: typeof POSTGAME_POSITION_EVIDENCE_SCHEMA_VERSION;
+  readonly kind: "terminal-checkmate";
+  readonly moveIndex: number;
+  readonly beforeFen: string;
+  readonly afterFen: string;
+  readonly perspective: PlayerColor;
+  readonly beforeBestLine: EngineLine;
+  readonly outcome: Readonly<{
+    readonly result: "checkmate";
+    readonly winner: PlayerColor;
+    readonly loser: PlayerColor;
+    readonly terminalFen: string;
+  }>;
+}
+
+export type PostgamePositionEvidenceV1 =
+  PostgameDecisionEvidenceV1 | PostgameTerminalCheckmateEvidenceV1;
 
 export const POSTGAME_STABILITY_THRESHOLDS = Object.freeze({
   /** Differences below this are ignored as engine noise. */
@@ -316,17 +342,49 @@ export function decodePostgamePositionEvidenceV1(
   } catch {
     return undefined;
   }
-  const bestLine = readEngineLine(value.bestLine);
-  const playedLine = readEngineLine(value.playedLine);
-  if (!bestLine || !playedLine) return undefined;
+  if (value.kind === "decision") {
+    const bestLine = readEngineLine(value.bestLine);
+    const playedLine = readEngineLine(value.playedLine);
+    if (!bestLine || !playedLine) return undefined;
+    return freeze({
+      schemaVersion: 1,
+      kind: "decision",
+      moveIndex: value.moveIndex as number,
+      beforeFen: value.beforeFen,
+      afterFen: value.afterFen,
+      perspective: value.perspective,
+      bestLine,
+      playedLine,
+    });
+  }
+  if (value.kind !== "terminal-checkmate" || !isRecord(value.outcome))
+    return undefined;
+  const terminal = loadPosition(value.afterFen);
+  const winner = opposite(terminal.turn);
+  if (
+    !terminal.isCheckmate ||
+    value.outcome.result !== "checkmate" ||
+    value.outcome.terminalFen !== value.afterFen ||
+    value.outcome.winner !== winner ||
+    value.outcome.loser !== terminal.turn
+  )
+    return undefined;
+  const beforeBestLine = readEngineLine(value.beforeBestLine);
+  if (!beforeBestLine) return undefined;
   return freeze({
     schemaVersion: 1,
+    kind: "terminal-checkmate",
     moveIndex: value.moveIndex as number,
     beforeFen: value.beforeFen,
     afterFen: value.afterFen,
     perspective: value.perspective,
-    bestLine,
-    playedLine,
+    beforeBestLine,
+    outcome: {
+      result: "checkmate",
+      winner,
+      loser: terminal.turn,
+      terminalFen: value.afterFen,
+    },
   });
 }
 
@@ -455,6 +513,43 @@ export function decodeFinalLineSnapshotV1(
     terminalFen: value.terminalFen,
     participants: { white, black },
     moves,
+  });
+}
+
+/**
+ * Completes the final move's evidence without requesting an impossible
+ * post-mate engine position. The only engine input is the pre-move best line;
+ * the played outcome is the exact checkmate already proven by the snapshot.
+ */
+export function completeTerminalCheckmateEvidenceV1(
+  finalLine: FinalLineSnapshotV1,
+  perspective: PlayerColor,
+  beforeBestLine: EngineLine,
+): PostgameTerminalCheckmateEvidenceV1 {
+  if (!isColor(perspective))
+    throw new RangeError("Engine perspective must be white or black");
+  const snapshot = decodeFinalLineSnapshotV1(finalLine);
+  if (!snapshot) throw new RangeError("Final line snapshot must be valid");
+  const move = snapshot.moves.at(-1);
+  if (!move || move.afterFen !== snapshot.terminalFen)
+    throw new RangeError("Final line snapshot must end in checkmate");
+  const verifiedLine = readEngineLine(beforeBestLine);
+  if (!verifiedLine)
+    throw new RangeError("A valid pre-move engine line is required");
+  return freeze({
+    schemaVersion: 1,
+    kind: "terminal-checkmate",
+    moveIndex: move.index,
+    beforeFen: move.beforeFen,
+    afterFen: move.afterFen,
+    perspective,
+    beforeBestLine: verifiedLine,
+    outcome: {
+      result: "checkmate",
+      winner: snapshot.winner,
+      loser: opposite(snapshot.winner),
+      terminalFen: snapshot.terminalFen,
+    },
   });
 }
 
@@ -670,6 +765,15 @@ function evidenceForSnapshot(
       accepted.has(item.moveIndex)
     )
       continue;
+    if (
+      item.kind === "terminal-checkmate" &&
+      (item.moveIndex !== snapshot.moves.length - 1 ||
+        item.outcome.result !== snapshot.result ||
+        item.outcome.winner !== snapshot.winner ||
+        item.outcome.loser !== opposite(snapshot.winner) ||
+        item.outcome.terminalFen !== snapshot.terminalFen)
+    )
+      continue;
     accepted.set(item.moveIndex, item);
   }
   return accepted;
@@ -746,8 +850,19 @@ export function summarizeCheckmateGame(
   for (const move of snapshot.moves) {
     const observation = accepted.get(move.index);
     if (!observation) continue;
-    const best = expectedFromLine(observation.bestLine);
-    const played = expectedFromLine(observation.playedLine);
+    const best = expectedFromLine(
+      observation.kind === "terminal-checkmate"
+        ? observation.beforeBestLine
+        : observation.bestLine,
+    );
+    const played =
+      observation.kind === "terminal-checkmate"
+        ? {
+            value:
+              observation.perspective === observation.outcome.winner ? 1 : 0,
+            source: "mate" as const,
+          }
+        : expectedFromLine(observation.playedLine);
     const bestForActor =
       observation.perspective === move.color ? best.value : 1 - best.value;
     const playedForActor =

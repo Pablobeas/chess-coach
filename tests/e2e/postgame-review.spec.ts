@@ -4,6 +4,7 @@ import { loadPgn } from "../../packages/chess-core/src/index";
 const STORAGE_KEY = "chess-coach:active-game:v1";
 const FOOLS_MATE = "1. f3 e5 2. g4 Qh4#";
 const SCHOLAR_MATE = "1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7#";
+const SCHOLAR_PREMATE = "1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6";
 
 type PlayerColor = "white" | "black";
 
@@ -71,13 +72,64 @@ async function openSeededReview(
 ) {
   const stored = storedTerminalGame(pgn, playerColor, withDecoy, cursor);
   await page.addInitScript(
-    ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+    ({ key, value }) => {
+      if (!localStorage.getItem(key))
+        localStorage.setItem(key, JSON.stringify(value));
+    },
     { key: STORAGE_KEY, value: stored },
   );
   await page.goto("/");
   const dialog = page.getByRole("dialog", { name: "Resumen final" });
   await expect(dialog).toBeVisible({ timeout: 12_000 });
   return dialog;
+}
+
+async function openSeededPosition(
+  page: Page,
+  pgn: string,
+  cursor = loadPgn(pgn).history.length,
+) {
+  const stored = storedTerminalGame(pgn, "white", false, cursor);
+  await page.addInitScript(
+    ({ key, value }) => {
+      if (!localStorage.getItem(key))
+        localStorage.setItem(key, JSON.stringify(value));
+    },
+    { key: STORAGE_KEY, value: stored },
+  );
+  await page.goto("/");
+  await expect(page.locator(".board")).toBeVisible();
+}
+
+async function installWorkerProbe(page: Page, terminalFen: string) {
+  await page.addInitScript(
+    ({ terminalFen }) => {
+      const workerUrls: string[] = [];
+      const terminalRequests: string[] = [];
+      const NativeWorker = window.Worker;
+      window.Worker = new Proxy(NativeWorker, {
+        construct(target, args, newTarget) {
+          const worker = Reflect.construct(target, args, newTarget) as Worker;
+          workerUrls.push(String(args[0]));
+          const postMessage = worker.postMessage.bind(worker);
+          worker.postMessage = (
+            message: unknown,
+            transfer?: Transferable[],
+          ) => {
+            if (typeof message === "string" && message.includes(terminalFen))
+              terminalRequests.push(message);
+            return postMessage(message, transfer ?? []);
+          };
+          return worker;
+        },
+      });
+      Object.assign(window, {
+        __workerUrls: workerUrls,
+        __terminalRequests: terminalRequests,
+      });
+    },
+    { terminalFen },
+  );
 }
 
 function reviewMoves(dialog: ReturnType<Page["getByRole"]>) {
@@ -96,7 +148,10 @@ test.describe("postgame review", () => {
   }) => {
     const stored = storedTerminalGame(FOOLS_MATE, "white", false, 3);
     await page.addInitScript(
-      ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+      ({ key, value }) => {
+        if (!localStorage.getItem(key))
+          localStorage.setItem(key, JSON.stringify(value));
+      },
       { key: STORAGE_KEY, value: stored },
     );
     await page.goto("/");
@@ -106,6 +161,77 @@ test.describe("postgame review", () => {
     await expect(page.getByRole("button", { name: "Ver resumen" })).toHaveCount(
       0,
     );
+  });
+
+  async function playScholarMateFromPreMate(
+    page: Page,
+    reducedMotion: boolean,
+  ) {
+    if (reducedMotion) await page.emulateMedia({ reducedMotion: "reduce" });
+    await openSeededPosition(page, SCHOLAR_PREMATE);
+    await page.getByRole("button", { name: /^h5,/ }).click();
+    await page.evaluate(() => {
+      const state = window as Window & {
+        __mateAppliedAt?: number;
+        __reviewOpenedAt?: number;
+      };
+      state.__mateAppliedAt = undefined;
+      state.__reviewOpenedAt = undefined;
+      new MutationObserver(() => {
+        if (
+          state.__mateAppliedAt === undefined &&
+          document
+            .querySelector<HTMLElement>(".board")
+            ?.getAttribute("aria-label")
+            ?.includes("jaque mate")
+        )
+          state.__mateAppliedAt = performance.now();
+        if (
+          state.__mateAppliedAt !== undefined &&
+          state.__reviewOpenedAt === undefined &&
+          document.querySelector(
+            '[role="dialog"][aria-labelledby="postgame-review-title"]',
+          )
+        )
+          state.__reviewOpenedAt = performance.now();
+      }).observe(document.body, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+    });
+    await page.getByRole("button", { name: /^f7,.*destino legal/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Resumen final" });
+    await expect(dialog).toBeVisible({ timeout: 1_000 });
+    return page.evaluate(() => {
+      const state = window as Window & {
+        __mateAppliedAt?: number;
+        __reviewOpenedAt?: number;
+      };
+      if (
+        state.__mateAppliedAt === undefined ||
+        state.__reviewOpenedAt === undefined
+      )
+        return Number.POSITIVE_INFINITY;
+      return state.__reviewOpenedAt - state.__mateAppliedAt;
+    });
+  }
+
+  test("opens the review immediately after a user mate from the board", async ({
+    page,
+  }) => {
+    // The measurement spans the two React commits after mate, not engine work.
+    // Cross-browser scheduling needs a 1.5 s upper bound while preserving the
+    // real elapsed-time assertion.
+    expect(await playScholarMateFromPreMate(page, false)).toBeLessThan(1_500);
+  });
+
+  test("opens the review within the reduced-motion budget", async ({
+    page,
+  }) => {
+    // Reduced motion removes the intentional 370 ms piece animation; the
+    // 1-second bound absorbs React/WebKit scheduling without awaiting analysis.
+    expect(await playScholarMateFromPreMate(page, true)).toBeLessThan(1_000);
   });
 
   test("opens only at terminal cursor, reports a loss, and shows final SAN only", async ({
@@ -166,15 +292,23 @@ test.describe("postgame review", () => {
         (score) => score === "Datos insuficientes" || /^\d+\/100$/.test(score),
       ),
     ).toBe(true);
+    const beforeReload = await page.evaluate((key) => {
+      const stored = JSON.parse(localStorage.getItem(key) ?? "null");
+      return stored?.workspace?.postgameReview;
+    }, STORAGE_KEY);
+    expect(beforeReload?.reviewId).toBeTruthy();
     await page.reload();
-    await expect(
-      page.getByRole("dialog", { name: "Resumen final" }),
-    ).toBeVisible({ timeout: 12_000 });
-    await expect(
-      page
-        .getByRole("dialog", { name: "Resumen final" })
-        .locator(".postgame-progress"),
-    ).toBeVisible();
+    const reloadedDialog = page.getByRole("dialog", { name: "Resumen final" });
+    await expect(reloadedDialog).toBeVisible({ timeout: 12_000 });
+    await expect(reloadedDialog.locator(".postgame-progress")).toBeVisible();
+    const afterReload = await page.evaluate((key) => {
+      const stored = JSON.parse(localStorage.getItem(key) ?? "null");
+      return stored?.workspace?.postgameReview;
+    }, STORAGE_KEY);
+    expect(afterReload?.reviewId).toBe(beforeReload.reviewId);
+    expect(afterReload?.progress.completed).toBeGreaterThanOrEqual(
+      beforeReload.progress.completed,
+    );
   });
 
   test("close stays closed through updates, Escape restores focus, and summary reopens", async ({
@@ -279,5 +413,39 @@ test.describe("postgame review", () => {
           .evaluate((element) => element.scrollWidth <= element.clientWidth),
       )
       .toBe(true);
+  });
+
+  test("analyzes every terminal position without constructing ASM fallback", async ({
+    page,
+  }) => {
+    const terminalFen = loadPgn(FOOLS_MATE).fen;
+    await installWorkerProbe(page, terminalFen);
+    const dialog = await openSeededReview(page, FOOLS_MATE, "white");
+    await expect
+      .poll(() => dialog.locator(".postgame-progress").textContent(), {
+        timeout: 30_000,
+      })
+      .toMatch(/Estimación local terminada · 4\/4 posiciones/);
+    const stored = await page.evaluate((key) => {
+      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+      return value?.workspace?.postgameReview;
+    }, STORAGE_KEY);
+    expect(stored?.status).toBe("ready");
+    expect(stored?.progress).toEqual({ completed: 4, total: 4 });
+    const probe = await page.evaluate(() => {
+      const value = window as Window & {
+        __workerUrls?: string[];
+        __terminalRequests?: string[];
+      };
+      return {
+        workerUrls: value.__workerUrls ?? [],
+        terminalRequests: value.__terminalRequests ?? [],
+      };
+    });
+    expect(probe.workerUrls).toHaveLength(1);
+    expect(probe.workerUrls.join(" ")).not.toMatch(
+      /launcher.*asm|stockfish-18-asm/i,
+    );
+    expect(probe.terminalRequests).toEqual([]);
   });
 });

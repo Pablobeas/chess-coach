@@ -529,6 +529,95 @@ export function postgameReviewAutoOpenCandidate(
     : undefined;
 }
 
+export interface PostgameAnalysisPosition {
+  readonly id: string;
+  readonly fen: string;
+  readonly perspective: PlayerColor;
+}
+
+export function postgameAnalysisPositionsForTask(
+  task: Readonly<{
+    kind: "decision" | "terminal-checkmate";
+    reviewId: string;
+    moveIndex: number;
+    color: PlayerColor;
+    beforeFen: string;
+    afterFen: string;
+  }>,
+): readonly PostgameAnalysisPosition[] {
+  return task.kind === "terminal-checkmate"
+    ? [
+        {
+          id: `${task.reviewId}:before:${task.moveIndex}`,
+          fen: task.beforeFen,
+          perspective: task.color,
+        },
+      ]
+    : [
+        {
+          id: `${task.reviewId}:before:${task.moveIndex}`,
+          fen: task.beforeFen,
+          perspective: task.color,
+        },
+        {
+          id: `${task.reviewId}:after:${task.moveIndex}`,
+          fen: task.afterFen,
+          perspective: task.color,
+        },
+      ];
+}
+
+export async function resolvePostgameReviewTask(args: {
+  readonly task: Readonly<{
+    kind: "decision" | "terminal-checkmate";
+    reviewId: string;
+    moveIndex: number;
+    color: PlayerColor;
+    beforeFen: string;
+    afterFen: string;
+  }>;
+  readonly review: Readonly<{
+    snapshot: {
+      terminalFen: string;
+      moves: readonly {
+        beforeFen: string;
+        afterFen: string;
+      }[];
+    };
+  }>;
+  readonly analyzePosition: (
+    request: PostgameAnalysisPosition,
+  ) => Promise<AnalysisResult>;
+}): Promise<ReturnType<typeof postgameEvidenceFromAnalysis>> {
+  const calls = postgameAnalysisPositionsForTask(args.task);
+  const results = await Promise.all(
+    calls.map((request) => args.analyzePosition(request)),
+  );
+  const bestLine = results[0]?.lines[0];
+  if (!bestLine) throw new Error("Missing postgame best line");
+  if (args.task.kind === "terminal-checkmate") {
+    return postgameEvidenceFromAnalysis({
+      kind: "terminal-checkmate",
+      review: args.review as Parameters<
+        typeof postgameEvidenceFromAnalysis
+      >[0]["review"],
+      moveIndex: args.task.moveIndex,
+      bestLine,
+    });
+  }
+  const playedLine = results[1]?.lines[0];
+  if (!playedLine) throw new Error("Missing postgame played line");
+  return postgameEvidenceFromAnalysis({
+    kind: "decision",
+    review: args.review as Parameters<
+      typeof postgameEvidenceFromAnalysis
+    >[0]["review"],
+    moveIndex: args.task.moveIndex,
+    bestLine,
+    playedLine,
+  });
+}
+
 export function GameTurnStatus({
   status,
 }: {
@@ -1158,6 +1247,7 @@ export function App() {
   const postgameReviewTaskRef = useRef<
     | {
         readonly reviewId: string;
+        readonly kind: "decision" | "terminal-checkmate";
         readonly moveIndex: number;
         readonly beforeFen: string;
         readonly afterFen: string;
@@ -1594,6 +1684,7 @@ export function App() {
     if (!nextTask) return;
     postgameReviewTaskRef.current = {
       reviewId: nextTask.reviewId,
+      kind: nextTask.kind,
       moveIndex: nextTask.moveIndex,
       beforeFen: nextTask.beforeFen,
       afterFen: nextTask.afterFen,
@@ -1603,37 +1694,22 @@ export function App() {
         const engine = (coachEngineRef.current ??=
           createBrowserStockfishEngine());
         const limit = coachSearchPlan(settings.enginePreset).limit;
-        const [beforeResult, afterResult] = await Promise.all([
-          coachAnalysisCache.analyze(
-            engine,
-            {
-              id: `${nextTask.reviewId}:before:${nextTask.moveIndex}`,
-              fen: nextTask.beforeFen,
-              perspective: nextTask.color,
-              preset: settings.enginePreset,
-              multiPv: 1,
-              limit,
-            },
-            signal,
-          ),
-          coachAnalysisCache.analyze(
-            engine,
-            {
-              id: `${nextTask.reviewId}:after:${nextTask.moveIndex}`,
-              fen: nextTask.afterFen,
-              perspective: nextTask.color,
-              preset: settings.enginePreset,
-              multiPv: 1,
-              limit,
-            },
-            signal,
-          ),
-        ]);
+        const evidence = await resolvePostgameReviewTask({
+          task: nextTask,
+          review: postgameReview,
+          analyzePosition: (request) =>
+            coachAnalysisCache.analyze(
+              engine,
+              {
+                ...request,
+                preset: settings.enginePreset,
+                multiPv: 1,
+                limit,
+              },
+              signal,
+            ),
+        });
         if (signal.aborted) return;
-        const bestLine = beforeResult.lines[0];
-        const playedLine = afterResult.lines[0];
-        if (!bestLine || !playedLine)
-          throw new Error("Missing postgame analysis line");
         setWorkspace((current) => {
           const review = current.postgameReview;
           if (!review || review.reviewId !== nextTask.reviewId) return current;
@@ -1644,12 +1720,6 @@ export function App() {
             move.afterFen !== nextTask.afterFen
           )
             return current;
-          const evidence = postgameEvidenceFromAnalysis({
-            review,
-            moveIndex: nextTask.moveIndex,
-            bestLine,
-            playedLine,
-          });
           if (!evidence) return current;
           const nextReview = mergePostgameReviewEvidence(review, evidence);
           return nextReview === review

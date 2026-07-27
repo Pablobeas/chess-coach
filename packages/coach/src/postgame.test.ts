@@ -5,13 +5,14 @@ import {
 } from "@chess-coach/chess-core";
 import { describe, expect, it } from "vitest";
 import {
+  completeTerminalCheckmateEvidenceV1,
   createFinalLineSnapshotV1,
   decodeFinalLineSnapshotV1,
   decodePostgamePositionEvidenceV1,
   phaseFinalLine,
   summarizeCheckmateGame,
   type FinalLineSnapshotV1,
-  type PostgamePositionEvidenceV1,
+  type PostgameDecisionEvidenceV1,
 } from "./postgame";
 
 function play(uciMoves: readonly string[]) {
@@ -48,7 +49,7 @@ function evidenceFor(
     readonly best?: readonly [number, number, number];
     readonly played?: readonly [number, number, number];
   } = {},
-): PostgamePositionEvidenceV1 {
+): PostgameDecisionEvidenceV1 {
   const move = line.moves[index]!;
   const makeLine = (wdl: readonly [number, number, number]) => ({
     rank: 1,
@@ -58,6 +59,7 @@ function evidenceFor(
   });
   return {
     schemaVersion: 1,
+    kind: "decision",
     moveIndex: index,
     beforeFen: move.beforeFen,
     afterFen: move.afterFen,
@@ -140,6 +142,96 @@ describe("post-game terminal line", () => {
 });
 
 describe("post-game decision stability", () => {
+  it("completes the final mating move with only pre-move analysis and exact outcome", () => {
+    const fool = terminalLine();
+    const scholar = terminalLine(scholarMate());
+    const bestLine = evidenceFor(fool, 0).bestLine;
+    const blackPerspective = completeTerminalCheckmateEvidenceV1(
+      fool,
+      "black",
+      bestLine,
+    );
+    const whitePerspective = completeTerminalCheckmateEvidenceV1(
+      scholar,
+      "white",
+      bestLine,
+    );
+    const fourTerminalContexts = [
+      completeTerminalCheckmateEvidenceV1(fool, "white", bestLine),
+      blackPerspective,
+      whitePerspective,
+      completeTerminalCheckmateEvidenceV1(scholar, "black", bestLine),
+    ];
+    const foolEvidence = fool.moves.map((_, index) =>
+      index === fool.moves.length - 1
+        ? blackPerspective
+        : evidenceFor(fool, index),
+    );
+    const scholarEvidence = scholar.moves.map((_, index) =>
+      index === scholar.moves.length - 1
+        ? whitePerspective
+        : evidenceFor(scholar, index),
+    );
+
+    expect(blackPerspective).toMatchObject({
+      kind: "terminal-checkmate",
+      moveIndex: 3,
+      outcome: {
+        winner: "black",
+        loser: "white",
+        terminalFen: fool.terminalFen,
+      },
+    });
+    expect(whitePerspective).toMatchObject({
+      kind: "terminal-checkmate",
+      moveIndex: 6,
+      outcome: {
+        winner: "white",
+        loser: "black",
+        terminalFen: scholar.terminalFen,
+      },
+    });
+    expect("playedLine" in blackPerspective).toBe(false);
+    expect(
+      fourTerminalContexts.every(
+        (evidence) =>
+          decodePostgamePositionEvidenceV1(evidence)?.kind ===
+          "terminal-checkmate",
+      ),
+    ).toBe(true);
+    expect(summarizeCheckmateGame(fool, foolEvidence).status).toBe("complete");
+    expect(summarizeCheckmateGame(scholar, scholarEvidence).status).toBe(
+      "complete",
+    );
+  });
+
+  it("accepts terminal evidence only for the exact final snapshot move", () => {
+    const line = terminalLine();
+    const terminal = completeTerminalCheckmateEvidenceV1(
+      line,
+      "black",
+      evidenceFor(line, 0).bestLine,
+    );
+    const earlyTerminal = { ...terminal, moveIndex: 1 };
+    const nonTerminal = {
+      ...terminal,
+      afterFen: line.moves[2]!.afterFen,
+      outcome: { ...terminal.outcome, terminalFen: line.moves[2]!.afterFen },
+    };
+
+    expect(decodePostgamePositionEvidenceV1(earlyTerminal)).toBeDefined();
+    expect(decodePostgamePositionEvidenceV1(nonTerminal)).toBeUndefined();
+    expect(
+      decodePostgamePositionEvidenceV1({
+        ...terminal,
+        outcome: { ...terminal.outcome, winner: "white" },
+      }),
+    ).toBeUndefined();
+    expect(summarizeCheckmateGame(line, [earlyTerminal]).status).toBe(
+      "partial",
+    );
+  });
+
   it("scores the two sides symmetrically and preserves WDL source", () => {
     const line = terminalLine();
     const summary = summarizeCheckmateGame(

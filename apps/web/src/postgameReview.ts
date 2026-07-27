@@ -1,5 +1,6 @@
 import type { MoveFeedbackRecord } from "./persistence";
 import {
+  completeTerminalCheckmateEvidenceV1,
   createFinalLineSnapshotV1,
   decodeFinalLineSnapshotV1,
   decodePostgamePositionEvidenceV1,
@@ -36,6 +37,7 @@ export interface PostgameReviewStateV1 {
 }
 
 export interface PostgameReviewTask {
+  readonly kind: "decision" | "terminal-checkmate";
   readonly reviewId: string;
   readonly moveIndex: number;
   readonly color: PlayerColor;
@@ -82,6 +84,7 @@ function createReviewId(lineId: string, snapshot: FinalLineSnapshotV1): string {
 }
 
 function moveLineFromRecord(
+  snapshot: FinalLineSnapshotV1,
   entry: MoveFeedbackRecord,
   moveIndex: number,
   color: PlayerColor,
@@ -96,8 +99,18 @@ function moveLineFromRecord(
     return undefined;
   if (record.turn.perspective !== color || record.turn.actor !== "user")
     return undefined;
+  const move = snapshot.moves[moveIndex];
+  if (!move) return undefined;
+  if (move.afterFen === snapshot.terminalFen) {
+    return completeTerminalCheckmateEvidenceV1(
+      snapshot,
+      record.turn.perspective,
+      record.evidence.before,
+    );
+  }
   return freeze({
     schemaVersion: 1,
+    kind: "decision",
     moveIndex,
     beforeFen: record.turn.beforeFen,
     afterFen: record.turn.afterFen,
@@ -194,7 +207,12 @@ export function createPostgameReviewStateV1(args: {
           entry.status === "ready",
       );
       if (!feedback) return [];
-      const evidence = moveLineFromRecord(feedback, move.index, move.color);
+      const evidence = moveLineFromRecord(
+        snapshot,
+        feedback,
+        move.index,
+        move.color,
+      );
       return evidence ? [evidence] : [];
     }),
   );
@@ -252,6 +270,10 @@ export function listPostgameReviewTasks(
       .filter((move) => !covered.has(move.index))
       .map((move): PostgameReviewTask =>
         freeze({
+          kind:
+            move.afterFen === review.snapshot.terminalFen
+              ? "terminal-checkmate"
+              : "decision",
           reviewId: review.reviewId,
           moveIndex: move.index,
           color: move.color,
@@ -316,7 +338,12 @@ export function seedPostgameReviewFromFeedback(
         entry.status === "ready",
     );
     if (!feedback) continue;
-    const evidence = moveLineFromRecord(feedback, move.index, move.color);
+    const evidence = moveLineFromRecord(
+      review.snapshot,
+      feedback,
+      move.index,
+      move.color,
+    );
     if (!evidence) continue;
     next = mergePostgameReviewEvidence(next, evidence);
   }
@@ -355,15 +382,28 @@ export function isPostgameReviewPendingForMove(
 }
 
 export function postgameEvidenceFromAnalysis(args: {
+  readonly kind?: PostgameReviewTask["kind"];
   readonly review: PostgameReviewStateV1;
   readonly moveIndex: number;
   readonly bestLine: EngineLine;
-  readonly playedLine: EngineLine;
+  readonly playedLine?: EngineLine;
 }): PostgamePositionEvidenceV1 | undefined {
   const move = args.review.snapshot.moves[args.moveIndex];
   if (!move) return undefined;
+  if (
+    (args.kind ?? "decision") === "terminal-checkmate" ||
+    move.afterFen === args.review.snapshot.terminalFen
+  ) {
+    return completeTerminalCheckmateEvidenceV1(
+      args.review.snapshot,
+      move.color,
+      args.bestLine,
+    );
+  }
+  if (!args.playedLine) return undefined;
   return freeze({
     schemaVersion: 1,
+    kind: "decision",
     moveIndex: move.index,
     beforeFen: move.beforeFen,
     afterFen: move.afterFen,

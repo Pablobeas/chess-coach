@@ -1,5 +1,6 @@
 import { applyMove, createInitialGame } from "@chess-coach/chess-core";
 import type { CoachTurnRecord } from "@chess-coach/coach";
+import { completeTerminalCheckmateEvidenceV1 } from "@chess-coach/coach";
 import { describe, expect, it } from "vitest";
 import type { MoveFeedbackRecord } from "./persistence";
 import {
@@ -173,6 +174,9 @@ describe("postgameReview", () => {
     expect(review.snapshot.participants.white.actor).toBe("user");
     expect(review.snapshot.participants.black.actor).toBe("maia");
     expect(review.evidence.map((item) => item.moveIndex)).toEqual([0, 2]);
+    expect(review.evidence.every((item) => item.kind === "decision")).toBe(
+      true,
+    );
     expect(review.progress).toEqual({ completed: 2, total: 7 });
     expect(review.status).toBe("partial");
     expect(Object.isFrozen(review.snapshot.moves)).toBe(true);
@@ -190,6 +194,27 @@ describe("postgameReview", () => {
     expect(review.snapshot.participants.white.actor).toBe("maia");
     expect(review.snapshot.participants.black.actor).toBe("user");
     expect(review.evidence.map((item) => item.moveIndex)).toEqual([1]);
+  });
+
+  it("seeds terminal mate evidence as terminal-checkmate instead of a fake after analysis", () => {
+    const session = foolsMate();
+    const review = createPostgameReviewStateV1({
+      session,
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [feedbackEntry(session, 3, "user")],
+    });
+
+    expect(review.evidence).toHaveLength(1);
+    expect(review.evidence[0]?.kind).toBe("terminal-checkmate");
+    expect(review.evidence[0]).toEqual(
+      completeTerminalCheckmateEvidenceV1(
+        review.snapshot,
+        "black",
+        (feedbackEntry(session, 3, "user").record as CoachTurnRecord).evidence
+          .before,
+      ),
+    );
   });
 
   it("orders missing work by priority, skips pending workspace feedback, and merges later seeds", () => {
@@ -218,6 +243,9 @@ describe("postgameReview", () => {
       "normal",
     ]);
     expect(tasks.at(-1)?.priority).toBe("low");
+    expect(
+      tasks.find((task) => task.moveIndex === session.history.length - 1)?.kind,
+    ).toBe("terminal-checkmate");
     expect(isPostgameReviewPendingForMove(initial, pendingFeedback, 0)).toBe(
       true,
     );
@@ -285,5 +313,47 @@ describe("postgameReview", () => {
       }).progress.completed,
     ).toBe(1);
     expect(markPostgameReviewUnavailable(merged).status).toBe("unavailable");
+  });
+
+  it("reaches ready when all normal moves and the terminal mate are merged", () => {
+    const review = createPostgameReviewStateV1({
+      session: foolsMate(),
+      lineId: "main",
+      playerColor: "black",
+      feedbackByPly: [],
+    });
+    const ready = review.snapshot.moves.reduce((current, move) => {
+      if (move.afterFen === current.snapshot.terminalFen) {
+        return mergePostgameReviewEvidence(
+          current,
+          completeTerminalCheckmateEvidenceV1(current.snapshot, move.color, {
+            rank: 1,
+            moves: [],
+            score: { kind: "centipawns", value: 50 },
+          }),
+        );
+      }
+      return mergePostgameReviewEvidence(
+        current,
+        postgameEvidenceFromAnalysis({
+          review: current,
+          moveIndex: move.index,
+          bestLine: {
+            rank: 1,
+            moves: [],
+            score: { kind: "centipawns", value: 50 },
+          },
+          playedLine: {
+            rank: 1,
+            moves: [move.uci],
+            score: { kind: "centipawns", value: 25 },
+          },
+        })!,
+      );
+    }, review);
+
+    expect(ready.progress).toEqual({ completed: 4, total: 4 });
+    expect(ready.status).toBe("ready");
+    expect(ready.summary.status).toBe("complete");
   });
 });

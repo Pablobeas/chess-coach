@@ -242,3 +242,10 @@ usa una vista fija con tablero, resumen, navegación y acciones compactas; en
 orientación horizontal se reorganiza en dos columnas. El shell móvil bloquea el
 scroll del documento en uso normal y deja un fallback accesible para alturas
 extremas, zoom o texto grande.
+
+## Centro de entrenamiento
+
+- `PositionKey` normaliza el FEN a tablero, turno, enroques y en-passant; ignora el contador de medias jugadas y de jugadas completas para que las transposiciones coincidan.
+- El curso de Apertura Italiana indexa cada nodo por `PositionKey` y reutiliza la misma posición común cuando dos ramas transponen a ese estado.
+- `openingPeriodForSession` comparte la política temporal de apertura con la revisión postpartida, así que la clasificación de fases no depende de una regla paralela distinta.
+- La pantalla de aperturas pide evidencia local solo al entrar en práctica, usa `AbortController` para cancelar trabajo obsoleto y descarta resultados viejos con una versión de solicitud.

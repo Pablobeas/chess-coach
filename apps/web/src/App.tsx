@@ -2,6 +2,7 @@ import {
   createInitialGame,
   formatMoveSequence,
   loadPgn,
+  loadPosition,
   listCaptures,
   replayHistory,
   restoreSession,
@@ -122,6 +123,7 @@ import {
 } from "./pwaUpdate";
 
 const initialSnapshot = createInitialGame();
+export const GAME_MAIN_CONTENT_ID = "main-content";
 type EngineState = "idle" | "thinking" | "ready" | "error";
 const COACH_SLOW_THRESHOLD_MS = 4_000;
 export const COACH_DEADLINE_MS = 18_000;
@@ -1158,7 +1160,21 @@ export function bindVisualViewportHeight(
   };
 }
 
-export function App() {
+/** A training continuation starts with deliberate defaults, never a saved game's side or difficulty. */
+export function initialSettingsForGame(
+  initialFen: string | undefined,
+  recoveredSettings: GameSettings | undefined,
+): GameSettings {
+  return initialFen === undefined
+    ? (recoveredSettings ?? DEFAULT_SETTINGS)
+    : DEFAULT_SETTINGS;
+}
+
+export interface AppProps {
+  readonly initialFen?: string;
+}
+
+export function App({ initialFen }: AppProps) {
   useEffect(() => bindVisualViewportHeight(), []);
   useEffect(
     () => () => {
@@ -1168,13 +1184,19 @@ export function App() {
     [],
   );
   const recovered = useMemo(getRecoveredState, []);
-  const [started, setStarted] = useState(() => recovered !== null);
-  const [hasSavedGame, setHasSavedGame] = useState(() => recovered !== null);
-  const [settings, setSettings] = useState<GameSettings>(
-    () => recovered?.settings ?? DEFAULT_SETTINGS,
+  const [started, setStarted] = useState(
+    () => initialFen !== undefined || recovered !== null,
   );
-  const [workspace, setWorkspace] = useState<SessionWorkspace>(
-    () => recovered?.workspace ?? createSessionWorkspace(initialSnapshot),
+  const [hasSavedGame, setHasSavedGame] = useState(
+    () => initialFen === undefined && recovered !== null,
+  );
+  const [settings, setSettings] = useState<GameSettings>(() =>
+    initialSettingsForGame(initialFen, recovered?.settings),
+  );
+  const [workspace, setWorkspace] = useState<SessionWorkspace>(() =>
+    initialFen === undefined
+      ? (recovered?.workspace ?? createSessionWorkspace(initialSnapshot))
+      : createSessionWorkspace(loadPosition(initialFen)),
   );
   const activeLine = activeSessionLine(workspace);
   const postgameReview = workspace.postgameReview;
@@ -2673,7 +2695,7 @@ export function App() {
   };
 
   return (
-    <main className="shell">
+    <main id={GAME_MAIN_CONTENT_ID} className="shell">
       {waitingServiceWorker ? (
         <aside className="pwa-update" role="status" aria-live="polite">
           <span>Nueva versión lista.</span>

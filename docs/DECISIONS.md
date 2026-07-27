@@ -318,3 +318,22 @@ El índice RMS de estabilidad se versiona como ayuda de revisión final y separa
 buckets por color/jugador. La cola compartida de engine mantiene un modo secuencial
 `missing-only` con `cancel-resume` para no mezclar resultados entre solicitudes
 distintas.
+
+## ADR-020 — Centro de entrenamiento local verificado
+
+**Estado:** aceptada.
+
+El centro de entrenamiento se publica como contenido local verificado, no como
+material curado sin comprobación. Los 4 puzles del MVP solo se consideran aptos
+cuando `tools/training/verify-puzzles-v1.mjs` los valida contra Stockfish 18 Lite
+WASM y emite un reporte con hashes, licencia y presupuesto fijados.
+
+La Apertura Italiana conserva dos respuestas verificadas en el tramo principal y
+separa explicación de práctica. La práctica usa evidencia diferida, cancelable y
+con fallback local; si la evidencia no confirma una respuesta, la UI no inventa
+una jugada automática.
+
+`PositionKey` queda como llave canónica para detectar transposiciones y
+`openingPeriodForSession` comparte la misma política de apertura con la revisión
+postpartida. Esto evita duplicar reglas de fase y mantiene coherencia entre
+entrenamiento activo y análisis posterior.

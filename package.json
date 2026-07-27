@@ -17,6 +17,7 @@
     "test": "pnpm test:tools && pnpm test:evals && pnpm -r --if-present test",
     "test:evals": "vitest run --config tests/evals/vitest.config.ts",
     "test:tools": "node --test tools/*.test.mjs",
+    "verify:training-content": "node tools/training/verify-puzzles-v1.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

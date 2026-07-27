@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function startGame(page: Page) {
-  await page.goto("/");
+  await page.goto("/#/game");
   const begin = page.getByRole("button", { name: "Comenzar partida" });
   if (await begin.count()) await begin.click();
 }

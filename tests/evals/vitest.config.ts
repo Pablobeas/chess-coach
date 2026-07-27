@@ -16,6 +16,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["contextual-feedback-v3.test.ts"],
+    include: ["**/*.test.ts"],
   },
 });

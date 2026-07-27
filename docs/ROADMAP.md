@@ -50,3 +50,12 @@
 - [x] Layout responsive validado en viewport móvil y escritorio.
 - [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.
 - [ ] Estrategia de actualización del Worker/WASM y beta sin telemetría.
+
+## Centro de entrenamiento v1
+
+- El centro local ya cubre rutas de entrenamiento, persistencia, 4 puzles verificados
+  y el curso de Apertura Italiana con dos variantes principales verificadas.
+- La siguiente expansión debe mantener el contrato offline, cancelable y sin LLM,
+  y entrar con sus pruebas y su verificador propios.
+- Cualquier nuevo contenido curado debe traer evidencia de procedencia y hashes de
+  verificación antes de considerarse listo para publicación.

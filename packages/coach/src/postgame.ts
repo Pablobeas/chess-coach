@@ -628,36 +628,73 @@ function endingStart(snapshot: FinalLineSnapshotV1): number | undefined {
     : undefined;
 }
 
-/** Every terminal-line move gets one, and only one, phase. */
-export function phaseFinalLine(
-  snapshot: FinalLineSnapshotV1,
+type PhaseMove = Pick<
+  FinalLineMoveV1,
+  "index" | "color" | "uci" | "beforeFen" | "afterFen"
+>;
+
+/** Single source for the event-defined opening boundary used in every mode. */
+function phasesForMoves(
+  initialFen: string,
+  moves: readonly PhaseMove[],
+  ending: number | undefined,
 ): readonly PostgamePhase[] {
-  const decoded = decodeFinalLineSnapshotV1(snapshot);
-  if (!decoded) throw new RangeError("Final line snapshot must be valid");
-  const ending = endingStart(decoded);
-  if (!isStandardInitialFen(decoded.initialFen))
+  if (!isStandardInitialFen(initialFen))
     return freeze(
-      decoded.moves.map((_, index) =>
+      moves.map((_, index) =>
         ending !== undefined && index >= ending ? "ending" : "middlegame",
       ),
     );
-  let openingEnd = decoded.moves.length;
+  let openingEnd = moves.length;
   let events = 0;
-  for (const move of decoded.moves) {
-    events += openingEventValue(move);
+  for (const move of moves) {
+    events += openingEventValue(move as FinalLineMoveV1);
     if (move.index >= 5 && events >= 5) {
       openingEnd = move.index + 1;
       break;
     }
   }
   return freeze(
-    decoded.moves.map((_, index) =>
+    moves.map((_, index) =>
       ending !== undefined && index >= ending
         ? "ending"
         : index < openingEnd
           ? "opening"
           : "middlegame",
     ),
+  );
+}
+
+/**
+ * Applies the same opening policy to an active session. There is no separate
+ * move-count rule: the result is the exact shared phase sequence (without a
+ * terminal-only endgame classification).
+ */
+export function openingPeriodForSession(
+  session: GameSession,
+): readonly PostgamePhase[] {
+  const moves: readonly PhaseMove[] = replayHistory(session).map((entry) =>
+    freeze({
+      index: entry.historyIndex,
+      color: loadPosition(entry.beforeFen).turn,
+      uci: entry.move.uci,
+      beforeFen: entry.beforeFen,
+      afterFen: entry.afterFen,
+    }),
+  );
+  return phasesForMoves(session.initialFen, moves, undefined);
+}
+
+/** Every terminal-line move gets one, and only one, phase. */
+export function phaseFinalLine(
+  snapshot: FinalLineSnapshotV1,
+): readonly PostgamePhase[] {
+  const decoded = decodeFinalLineSnapshotV1(snapshot);
+  if (!decoded) throw new RangeError("Final line snapshot must be valid");
+  return phasesForMoves(
+    decoded.initialFen,
+    decoded.moves,
+    endingStart(decoded),
   );
 }
 

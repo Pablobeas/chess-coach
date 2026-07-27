@@ -16,7 +16,7 @@ test("desktop preserves full feedback while keeping the board visible", async ({
       }),
     });
   });
-  await page.goto("/");
+  await page.goto("/#/game");
   await page.getByRole("button", { name: "Comenzar partida" }).click();
   await page.getByRole("button", { name: /^e2,/ }).click();
   await page.getByRole("button", { name: /^e4,.*destino legal/ }).click();

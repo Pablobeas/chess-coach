@@ -148,3 +148,16 @@ las brechas de verificación manual están declaradas.
 - La cobertura de preemption distingue reencolado interno único tras rival
   prioritario, cancelación externa o stale sin reintento y segunda interrupción con
   caída a `unavailable` y retry manual.
+
+## Centro de entrenamiento v1
+
+- `pnpm verify:training-content` ejecuta `node tools/training/verify-puzzles-v1.mjs`
+  y produce el reporte `output/training/verify-puzzles-v1-report.json`.
+- La verificación documenta Stockfish 18 Lite WASM con `jsSha256`, `wasmSha256`,
+  licencia `GPL-3.0` y presupuesto `Hash=16 MB`, `userMoveNodes=50000`,
+  `replyMoveNodes=50000` y `userMoveMultiPvLimit=4`.
+- La cobertura de regresión relevante vive en `tests/evals/training/puzzles-v1.test.ts`,
+  `tests/evals/training/opening-safety.test.ts`,
+  `apps/web/src/TrainingApp.test.ts` y `tests/e2e/training-flows.spec.ts`.
+- La práctica de aperturas debe seguir siendo cancelable y no bloqueante; la evidencia
+  tardía u obsoleta no puede aplicar una jugada nueva.

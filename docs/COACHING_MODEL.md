@@ -169,3 +169,16 @@ se descarta y la sesión no puede quedarse en `pending`.
 La experiencia visible distingue entre estado lento, resultado listo, error
 recuperable y análisis no disponible. El detalle completo sigue accesible aunque la
 tarjeta compacta sea la vista principal en móvil.
+
+## Centro de entrenamiento v1
+
+- Los 4 puzles del MVP solo se consideran válidos cuando el verificador reproduce la
+  línea legal completa y confirma al menos dos decisiones relevantes por ejercicio.
+- La evidencia visible del puzle procede del motor local y de detectores
+  deterministas; la plantilla pedagógica no inventa jugadas ni sustituye la
+  validación.
+- La Apertura Italiana separa explicación y práctica: la explicación guía el plan y
+  la práctica solo aplica una respuesta automática cuando la evidencia confirma el
+  repertorio o una alternativa verificada.
+- `PositionKey` actúa como llave estructural para reconocer transposiciones y evitar
+  que dos caminos distintos se presenten como posiciones distintas.

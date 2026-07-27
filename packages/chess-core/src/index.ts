@@ -558,19 +558,17 @@ export function listDefenders(
   }
 
   return Object.freeze(
-    game
-      .attackers(targetSquare, occupant.color)
-      .map((defenderSquare) => {
-        const piece = game.get(defenderSquare);
-        if (piece === undefined) {
-          throw new InvalidFenError(fen);
-        }
+    game.attackers(targetSquare, occupant.color).map((defenderSquare) => {
+      const piece = game.get(defenderSquare);
+      if (piece === undefined) {
+        throw new InvalidFenError(fen);
+      }
 
-        return toPositionPiece(defenderSquare, {
-          color: piece.color,
-          type: piece.type,
-        });
-      }),
+      return toPositionPiece(defenderSquare, {
+        color: piece.color,
+        type: piece.type,
+      });
+    }),
   );
 }
 
@@ -755,3 +753,13 @@ export function listCaptures(session: GameSession): readonly CaptureRecord[] {
 
   return Object.freeze(captures);
 }
+
+export {
+  applyUciMove,
+  InvalidUciMoveError,
+  positionKeyForFen,
+  replayUciLine,
+  type PositionKey,
+  type ReplayUciLineResult,
+  type UciLineReplay,
+} from "./trainingPosition";

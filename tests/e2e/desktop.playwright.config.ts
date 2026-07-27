@@ -6,6 +6,7 @@ export default defineConfig({
     "desktop-smoke.spec.ts",
     "opponent-last-move.spec.ts",
     "postgame-review.spec.ts",
+    "*training*.spec.ts",
   ],
   timeout: 30_000,
   outputDir: "../../output/playwright/desktop-test-results",

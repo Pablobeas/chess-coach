@@ -13,6 +13,8 @@ import {
 import type { EngineLine, EngineScore } from "@chess-coach/engine";
 
 export * from "./postgame.js";
+export * from "./training/index.js";
+export * from "./training-content/mvp.js";
 
 export type MoveLabel =
   | "best"

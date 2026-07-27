@@ -78,7 +78,7 @@ async function openSeededReview(
     },
     { key: STORAGE_KEY, value: stored },
   );
-  await page.goto("/");
+  await page.goto("/#/game");
   const dialog = page.getByRole("dialog", { name: "Resumen final" });
   await expect(dialog).toBeVisible({ timeout: 12_000 });
   return dialog;
@@ -97,7 +97,7 @@ async function openSeededPosition(
     },
     { key: STORAGE_KEY, value: stored },
   );
-  await page.goto("/");
+  await page.goto("/#/game");
   await expect(page.locator(".board")).toBeVisible();
 }
 
@@ -128,7 +128,7 @@ test.describe("postgame review", () => {
       },
       { key: STORAGE_KEY, value: stored },
     );
-    await page.goto("/");
+    await page.goto("/#/game");
     await expect(
       page.getByRole("dialog", { name: "Resumen final" }),
     ).toHaveCount(0);

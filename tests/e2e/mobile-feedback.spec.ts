@@ -14,7 +14,7 @@ async function playMove(page: Page, from: string, to: string) {
 }
 
 async function start(page: Page) {
-  await page.goto("/");
+  await page.goto("/#/game");
   const begin = page.getByRole("button", { name: "Comenzar partida" });
   if (await begin.count()) await begin.click();
 }
@@ -58,7 +58,7 @@ test.describe("mobile fixed game and coach feedback", () => {
     page,
   }) => {
     await page.addInitScript(() => localStorage.clear());
-    await page.goto("/");
+    await page.goto("/#/game");
     const configuredViewport = test.info().project.use.viewport as
       { width?: number } | undefined;
     if (configuredViewport?.width === 390) {

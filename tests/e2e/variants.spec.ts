@@ -95,7 +95,7 @@ test.describe("variant history full matrix", () => {
       });
     });
 
-    await page.goto("/");
+    await page.goto("/#/game");
     await page.getByRole("button", { name: "Comenzar partida" }).click();
     await playMove(page, "e2", "e4");
     await expect(

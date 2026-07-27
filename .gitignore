@@ -6,6 +6,7 @@ coverage/
 .playwright-cli/
 output/playwright/
 output/hosting/
+/output/
 .vite/
 .turbo/
 *.log

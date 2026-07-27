@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
+import { TrainingApp } from "./TrainingApp";
 import { APPLICATION_BASE, applicationUrl } from "./applicationUrl";
 import { PWA_ACTIVATE_EVENT, PWA_UPDATE_EVENT } from "./pwaUpdate";
 import "./styles.css";
@@ -79,6 +79,6 @@ if (!root) throw new Error("Missing #root element");
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <TrainingApp />
   </StrictMode>,
 );

@@ -1478,3 +1478,5 @@ export function createDeterministicEngine(): ChessEngine {
     },
   };
 }
+
+export * from "./openingEvidence.js";

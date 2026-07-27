@@ -3,6 +3,7 @@ import {
   applyMove,
   createInitialGame,
   listLegalMoves,
+  loadPosition,
   replayHistory,
 } from "@chess-coach/chess-core";
 import type { CoachTurnRecord } from "@chess-coach/coach";
@@ -124,6 +125,11 @@ const foolsMate = () =>
       }),
     createInitialGame(),
   );
+const terminalStalemate = () =>
+  applyMove(loadPosition("7k/8/6QK/8/8/8/8/8 w - - 0 1"), {
+    from: "g6",
+    to: "f7",
+  });
 
 function buildVariantWorkspace() {
   let workspace = navigateSessionLine(createSessionWorkspace(afterE4E5()), 2);
@@ -714,6 +720,105 @@ describe("local persistence", () => {
     expect(loadStoredGame(storage)?.feedbackByPly[0]?.status).toBe(
       "unavailable",
     );
+  });
+
+  it("drops only a terminal pending or unavailable live-feedback entry on load", () => {
+    const storage = memoryStorage();
+    const mate = foolsMate();
+    const history = replayHistory(mate);
+    const last = history.at(-1)!;
+    const previous = history[0]!;
+
+    saveStoredGame(
+      mate,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: previous.historyIndex,
+          uci: previous.move.uci,
+          actor: "user",
+          beforeFen: previous.beforeFen,
+          afterFen: previous.afterFen,
+          status: "unavailable",
+        },
+        {
+          historyIndex: last.historyIndex,
+          uci: last.move.uci,
+          actor: "maia",
+          beforeFen: last.beforeFen,
+          afterFen: last.afterFen,
+          status: "pending",
+        },
+      ],
+    );
+
+    expect(loadStoredGame(storage)?.feedbackByPly).toEqual([
+      {
+        historyIndex: previous.historyIndex,
+        uci: previous.move.uci,
+        actor: "user",
+        beforeFen: previous.beforeFen,
+        afterFen: previous.afterFen,
+        status: "unavailable",
+      },
+    ]);
+  });
+
+  it("keeps a terminal ready entry, but removes terminal unavailable from a drawn final move", () => {
+    const storage = memoryStorage();
+    const beforeMate = applyMove(
+      applyMove(applyMove(createInitialGame(), { from: "f2", to: "f3" }), {
+        from: "e7",
+        to: "e5",
+      }),
+      {
+        from: "g2",
+        to: "g4",
+      },
+    );
+    const mate = foolsMate();
+    const mateEntry = replayHistory(mate).at(-1)!;
+    saveStoredGame(
+      mate,
+      DEFAULT_SETTINGS,
+      storage,
+      [],
+      [
+        {
+          historyIndex: mateEntry.historyIndex,
+          uci: mateEntry.move.uci,
+          actor: "maia",
+          beforeFen: mateEntry.beforeFen,
+          afterFen: mateEntry.afterFen,
+          status: "ready",
+          record: recordFor(beforeMate, mate, "maia"),
+        },
+      ],
+    );
+    expect(loadStoredGame(storage)?.feedbackByPly[0]?.status).toBe("ready");
+
+    const drawStorage = memoryStorage();
+    const draw = terminalStalemate();
+    const drawEntry = replayHistory(draw).at(-1)!;
+    saveStoredGame(
+      draw,
+      DEFAULT_SETTINGS,
+      drawStorage,
+      [],
+      [
+        {
+          historyIndex: drawEntry.historyIndex,
+          uci: drawEntry.move.uci,
+          actor: "user",
+          beforeFen: drawEntry.beforeFen,
+          afterFen: draw.fen,
+          status: "unavailable",
+        },
+      ],
+    );
+    expect(loadStoredGame(drawStorage)?.feedbackByPly).toEqual([]);
   });
 
   it("keeps the workspace feedback as the source of truth for version 6 saves", () => {

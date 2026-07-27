@@ -168,6 +168,7 @@ function validFeedback(
   feedback: readonly MoveFeedbackRecord[],
 ): readonly MoveFeedbackRecord[] {
   const history = replayHistory(session);
+  const lastHistoryIndex = session.history.length - 1;
   return Object.freeze(
     feedback.filter((record) => {
       const entry = history[record.historyIndex];
@@ -178,6 +179,12 @@ function validFeedback(
         record.afterFen !== entry.afterFen
       )
         return false;
+      const isTerminalTransient =
+        session.isGameOver &&
+        record.historyIndex === lastHistoryIndex &&
+        record.afterFen === session.fen &&
+        record.status !== "ready";
+      if (isTerminalTransient) return false;
       return (
         record.status !== "ready" ||
         (record.record?.turn.playedUci === record.uci &&

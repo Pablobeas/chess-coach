@@ -529,6 +529,30 @@ export function postgameReviewAutoOpenCandidate(
     : undefined;
 }
 
+export function shouldAnalyzeLiveCoachMove(
+  actor: "user" | "maia",
+  after: Pick<GameSession, "isGameOver">,
+): boolean {
+  return actor === "user" && !after.isGameOver;
+}
+
+export function shouldRequestOpponentMove(args: {
+  readonly started: boolean;
+  readonly paused: boolean;
+  readonly isBrowsingHistory: boolean;
+  readonly isGameOver: boolean;
+  readonly turn: PlayerColor;
+  readonly engineColor: PlayerColor;
+}): boolean {
+  return (
+    args.started &&
+    !args.paused &&
+    !args.isBrowsingHistory &&
+    !args.isGameOver &&
+    args.turn === args.engineColor
+  );
+}
+
 export interface PostgameAnalysisPosition {
   readonly id: string;
   readonly fen: string;
@@ -1813,7 +1837,16 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (!started || paused || isBrowsingHistory || game.turn !== engineColor)
+    if (
+      !shouldRequestOpponentMove({
+        started,
+        paused,
+        isBrowsingHistory,
+        isGameOver: game.isGameOver,
+        turn: game.turn,
+        engineColor,
+      })
+    )
       return;
     const engineMayStart = game.history.length === 0 && engineColor === "white";
     if (game.history.length === 0 && !engineMayStart) return;
@@ -1916,6 +1949,7 @@ export function App() {
     engineColor,
     game.fen,
     game.history.length,
+    game.isGameOver,
     game.turn,
     activeLine.id,
     timeline.cursor,
@@ -1977,12 +2011,10 @@ export function App() {
         ? "user"
         : "maia";
 
-    // Maia's reply is already produced by the opponent engine. Running two
-    // additional Stockfish searches for every Maia ply makes the serial coach
-    // queue grow during a normal game, especially in the middlegame. The
-    // feedback panel already has a neutral fallback when no record exists, so
-    // reserve the expensive coaching analysis for the player's decisions.
-    if (actor === "maia") return;
+    // Maia's reply is already produced by the opponent engine. Terminal plies
+    // are handled by the post-game review pipeline, so the live coach must not
+    // enqueue pending feedback or an impossible post-move search for mate/stalemate.
+    if (!shouldAnalyzeLiveCoachMove(actor, after)) return;
 
     const identity = {
       historyIndex,

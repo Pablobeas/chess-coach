@@ -42,9 +42,11 @@ import {
   retryAnalysisTarget,
   rebuildCoachRetryTurn,
   reportCoachFailureDebug,
+  shouldRequestOpponentMove,
   shouldWaitForCoachRetry,
   shouldStartCoachRetry,
   shouldReplacePendingFeedback,
+  shouldAnalyzeLiveCoachMove,
   shouldCapturePostgameReview,
   workspaceTransitionNotice,
 } from "./App";
@@ -244,6 +246,92 @@ describe("historical board interaction", () => {
     expect(canPlayBoard(false, false, "white", "white")).toBe(true);
     expect(canPlayBoard(true, false, "white", "white")).toBe(false);
     expect(canPlayBoard(false, false, "black", "white")).toBe(false);
+  });
+
+  it("requests an opponent move only on a live non-terminal engine turn", () => {
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: false,
+        isBrowsingHistory: false,
+        isGameOver: false,
+        turn: "black",
+        engineColor: "black",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRequestOpponentMove({
+        started: false,
+        paused: false,
+        isBrowsingHistory: false,
+        isGameOver: false,
+        turn: "black",
+        engineColor: "black",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: true,
+        isBrowsingHistory: false,
+        isGameOver: false,
+        turn: "black",
+        engineColor: "black",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: false,
+        isBrowsingHistory: true,
+        isGameOver: false,
+        turn: "black",
+        engineColor: "black",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: false,
+        isBrowsingHistory: false,
+        isGameOver: true,
+        turn: "black",
+        engineColor: "black",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: false,
+        isBrowsingHistory: false,
+        isGameOver: false,
+        turn: "white",
+        engineColor: "black",
+      }),
+    ).toBe(false);
+  });
+
+  it("treats scholar mate as terminal, so the opponent must not be requested again", () => {
+    const scholarMate = playMate([
+      "e2e4",
+      "e7e5",
+      "d1h5",
+      "b8c6",
+      "f1c4",
+      "g8f6",
+      "h5f7",
+    ]);
+    expect(scholarMate.isGameOver).toBe(true);
+    expect(
+      shouldRequestOpponentMove({
+        started: true,
+        paused: false,
+        isBrowsingHistory: false,
+        isGameOver: scholarMate.isGameOver,
+        turn: scholarMate.turn,
+        engineColor: "black",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -693,6 +781,21 @@ describe("coach feedback states", () => {
     const pendingB = { identity: { requestId: "coach-b" } };
     expect(isCurrentCoachRequest(pendingB, "coach-a")).toBe(false);
     expect(isCurrentCoachRequest(pendingB, "coach-b")).toBe(true);
+  });
+
+  it("only analyzes non-terminal user moves in the live coach pipeline", () => {
+    expect(shouldAnalyzeLiveCoachMove("user", { isGameOver: false })).toBe(
+      true,
+    );
+    expect(shouldAnalyzeLiveCoachMove("user", { isGameOver: true })).toBe(
+      false,
+    );
+    expect(shouldAnalyzeLiveCoachMove("maia", { isGameOver: false })).toBe(
+      false,
+    );
+    expect(shouldAnalyzeLiveCoachMove("maia", { isGameOver: true })).toBe(
+      false,
+    );
   });
 
   it("classifies internal coach preemption without retrying invalidated work", () => {

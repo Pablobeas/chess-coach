@@ -101,37 +101,6 @@ async function openSeededPosition(
   await expect(page.locator(".board")).toBeVisible();
 }
 
-async function installWorkerProbe(page: Page, terminalFen: string) {
-  await page.addInitScript(
-    ({ terminalFen }) => {
-      const workerUrls: string[] = [];
-      const terminalRequests: string[] = [];
-      const NativeWorker = window.Worker;
-      window.Worker = new Proxy(NativeWorker, {
-        construct(target, args, newTarget) {
-          const worker = Reflect.construct(target, args, newTarget) as Worker;
-          workerUrls.push(String(args[0]));
-          const postMessage = worker.postMessage.bind(worker);
-          worker.postMessage = (
-            message: unknown,
-            transfer?: Transferable[],
-          ) => {
-            if (typeof message === "string" && message.includes(terminalFen))
-              terminalRequests.push(message);
-            return postMessage(message, transfer ?? []);
-          };
-          return worker;
-        },
-      });
-      Object.assign(window, {
-        __workerUrls: workerUrls,
-        __terminalRequests: terminalRequests,
-      });
-    },
-    { terminalFen },
-  );
-}
-
 function reviewMoves(dialog: ReturnType<Page["getByRole"]>) {
   return dialog.locator(".postgame-moves li");
 }
@@ -139,7 +108,12 @@ function reviewMoves(dialog: ReturnType<Page["getByRole"]>) {
 test.describe("postgame review", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      localStorage.clear();
+      // Keep the seeded workspace across an explicit reload in persistence
+      // tests, while still isolating each fresh browser context.
+      if (!sessionStorage.getItem("postgame-e2e-initialized")) {
+        localStorage.clear();
+        sessionStorage.setItem("postgame-e2e-initialized", "1");
+      }
     });
   });
 
@@ -299,6 +273,11 @@ test.describe("postgame review", () => {
     expect(beforeReload?.reviewId).toBeTruthy();
     await page.reload();
     const reloadedDialog = page.getByRole("dialog", { name: "Resumen final" });
+    // Reload restores the review state; presentation may remain closed after
+    // a prior dismissal, so reopen through the explicit summary affordance.
+    if (!(await reloadedDialog.isVisible())) {
+      await page.getByRole("button", { name: "Ver resumen" }).click();
+    }
     await expect(reloadedDialog).toBeVisible({ timeout: 12_000 });
     await expect(reloadedDialog.locator(".postgame-progress")).toBeVisible();
     const afterReload = await page.evaluate((key) => {
@@ -415,37 +394,52 @@ test.describe("postgame review", () => {
       .toBe(true);
   });
 
-  test("analyzes every terminal position without constructing ASM fallback", async ({
+  test("analyzes every live terminal position without creating terminal feedback or ASM fallback", async ({
     page,
   }) => {
-    const terminalFen = loadPgn(FOOLS_MATE).fen;
-    await installWorkerProbe(page, terminalFen);
-    const dialog = await openSeededReview(page, FOOLS_MATE, "white");
+    await openSeededPosition(page, SCHOLAR_PREMATE);
+    await page.getByRole("button", { name: /^h5,/ }).click();
+    await page.getByRole("button", { name: /^f7,.*destino legal/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Resumen final" });
+    await expect(dialog).toBeVisible({ timeout: 1_000 });
     await expect
       .poll(() => dialog.locator(".postgame-progress").textContent(), {
         timeout: 30_000,
       })
-      .toMatch(/Estimación local terminada · 4\/4 posiciones/);
+      .toMatch(/Estimación local terminada · 7\/7 posiciones/);
     const stored = await page.evaluate((key) => {
       const value = JSON.parse(localStorage.getItem(key) ?? "null");
       return value?.workspace?.postgameReview;
     }, STORAGE_KEY);
     expect(stored?.status).toBe("ready");
-    expect(stored?.progress).toEqual({ completed: 4, total: 4 });
-    const probe = await page.evaluate(() => {
-      const value = window as Window & {
-        __workerUrls?: string[];
-        __terminalRequests?: string[];
-      };
-      return {
-        workerUrls: value.__workerUrls ?? [],
-        terminalRequests: value.__terminalRequests ?? [],
-      };
-    });
-    expect(probe.workerUrls).toHaveLength(1);
-    expect(probe.workerUrls.join(" ")).not.toMatch(
-      /launcher.*asm|stockfish-18-asm/i,
-    );
-    expect(probe.terminalRequests).toEqual([]);
+    expect(stored?.progress).toEqual({ completed: 7, total: 7 });
+    const finalFeedback = await page.evaluate((key) => {
+      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+      return value?.workspace?.lines
+        ?.find((line: { id: string }) => line.id === "main")
+        ?.feedbackByPly?.find(
+          (entry: { historyIndex: number }) => entry.historyIndex === 6,
+        );
+    }, STORAGE_KEY);
+    // The terminal position belongs to postgame review, not the live coach
+    // contract. It must never leave a pending/unavailable MoveFeedback record.
+    expect(finalFeedback).toBeUndefined();
+    const workerUrls = page.workers().map((worker) => worker.url());
+    expect(workerUrls.join(" ")).not.toMatch(/launcher.*asm|stockfish-18-asm/i);
+    const reviewId = stored.reviewId;
+    await page.reload();
+    const reloaded = await page.evaluate((key) => {
+      const value = JSON.parse(localStorage.getItem(key) ?? "null");
+      const review = value?.workspace?.postgameReview;
+      const feedback = value?.workspace?.lines
+        ?.find((line: { id: string }) => line.id === "main")
+        ?.feedbackByPly?.find(
+          (entry: { historyIndex: number }) => entry.historyIndex === 6,
+        );
+      return { review, feedback };
+    }, STORAGE_KEY);
+    expect(reloaded.review.reviewId).toBe(reviewId);
+    expect(reloaded.review.progress.completed).toBe(7);
+    expect(reloaded.feedback).toBeUndefined();
   });
 });

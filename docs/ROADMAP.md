@@ -37,7 +37,8 @@
 
 - [x] Persistencia local versionada y recuperación.
 - [x] Exportación/importación PGN.
-- [ ] Resumen final y momentos críticos.
+- [x] Resumen final post-jaque-mate: línea terminal, fases, estabilidad, ambos jugadores y cobertura.
+- [ ] Revisión pedagógica individual de momentos críticos.
 - [x] Configuración de accesibilidad y nivel de ayuda.
 
 ## Fase 4 — Preparación pública (en progreso)

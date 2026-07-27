@@ -72,13 +72,17 @@ function Navigation({ route }: { readonly route: Route }) {
           </a>
         ))}
       </nav>
-      <Dropdown label="Menú">
-        <a role="menuitem" href="#/puzzles">
-          Progreso
-        </a>
-        <a role="menuitem" href="#/openings">
-          Repertorio
-        </a>
+      <Dropdown label="Menú de rutas">
+        {links.map((link) => (
+          <a
+            key={link.route}
+            role="menuitem"
+            href={`#${link.route}`}
+            aria-current={route === link.route ? "page" : undefined}
+          >
+            {link.label}
+          </a>
+        ))}
       </Dropdown>
     </header>
   );

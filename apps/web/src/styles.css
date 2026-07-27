@@ -2000,7 +2000,7 @@ button:focus-visible {
     stroke: Canvas;
   }
 }
-/* Training shell: intentionally independent from the game workspace styles. */
+/* Training shell: visually aligned with the game workspace. */
 .skip-link {
   position: fixed;
   left: 1rem;
@@ -2015,17 +2015,17 @@ button:focus-visible {
   top: 1rem;
 }
 .training-nav {
-  max-width: 1180px;
+  max-width: 1220px;
   margin: auto;
   padding: 1rem 1.25rem;
   display: flex;
   align-items: center;
   gap: 1rem;
-  border-bottom: 1px solid #d7e1df;
+  border-bottom: 1px solid var(--color-border);
 }
 .brand {
   font-weight: 800;
-  color: #173b53;
+  color: var(--color-accent-strong);
   text-decoration: none;
   letter-spacing: 0.04em;
 }
@@ -2036,16 +2036,18 @@ button:focus-visible {
 }
 .training-nav nav a,
 .dropdown button {
-  padding: 0.55rem 0.7rem;
+  min-height: 44px;
+  padding: 0.55rem 0.8rem;
   border-radius: 0.45rem;
-  color: #214458;
+  color: var(--color-text-muted);
   text-decoration: none;
   background: transparent;
   border: 0;
   font: inherit;
 }
 .training-nav [aria-current="page"] {
-  background: #dfeee8;
+  background: rgb(200 220 141 / 16%);
+  color: var(--color-accent-strong);
   font-weight: 700;
 }
 .dropdown {
@@ -2058,15 +2060,16 @@ button:focus-visible {
   display: grid;
   min-width: 10rem;
   padding: 0.35rem;
-  background: #fff;
-  border: 1px solid #b7c8c3;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
   border-radius: 0.5rem;
   box-shadow: 0 8px 22px #173b5326;
 }
 .dropdown-menu a {
-  padding: 0.55rem;
+  min-height: 44px;
+  padding: 0.65rem;
   text-decoration: none;
-  color: #173b53;
+  color: var(--color-text);
 }
 .training-home,
 .training-page {
@@ -2081,7 +2084,7 @@ button:focus-visible {
   font-size: clamp(2rem, 8vw, 4.5rem);
   line-height: 1.02;
   margin: 0.25rem 0 1rem;
-  color: #173b53;
+  color: var(--color-text);
 }
 .training-cards {
   display: grid;
@@ -2093,9 +2096,11 @@ button:focus-visible {
   min-height: 160px;
   padding: 1.25rem;
   border-radius: 1rem;
-  background: #f2f7f4;
-  border: 1px solid #cbd9d4;
-  color: #173b53;
+  background:
+    linear-gradient(145deg, rgb(200 220 141 / 8%), transparent 55%),
+    var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
   text-decoration: none;
 }
 .training-card span {
@@ -2111,30 +2116,16 @@ button:focus-visible {
 }
 .training-panel {
   padding: 1rem;
-  background: #f2f7f4;
+  background: var(--color-surface);
   border-radius: 0.8rem;
-  border: 1px solid #cbd9d4;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-card);
 }
 .training-actions {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
   margin-top: 1rem;
-}
-.training-field {
-  display: grid;
-  gap: 0.35rem;
-  font-weight: 650;
-  color: #173b53;
-}
-.training-field select {
-  min-height: 2.7rem;
-  padding: 0.45rem;
-  border: 1px solid #79948b;
-  border-radius: 0.45rem;
-  background: #fff;
-  color: #173b53;
-  font: inherit;
 }
 .training-controls {
   display: grid;
@@ -2147,6 +2138,10 @@ button:focus-visible {
 .training-board {
   width: 100%;
   aspect-ratio: 1;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.65rem;
 }
 .training-board .square {
   min-width: 0;
@@ -2163,7 +2158,185 @@ button:focus-visible {
 .training-summary {
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid #b7c8c3;
+  border-top: 1px solid var(--color-border);
+}
+.training-select {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.training-select-label {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+.training-select-trigger {
+  min-height: 44px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.5rem;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  text-align: left;
+}
+.training-select-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.55rem;
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-float);
+}
+.training-select-menu button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}
+.training-select-menu button:hover,
+.training-select-menu button.is-active {
+  border-left-color: var(--color-accent);
+  background: rgb(200 220 141 / 13%);
+  color: var(--color-accent-strong);
+}
+.training-board-arrows {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.training-arrow {
+  fill: none;
+  stroke-width: 0.14;
+  stroke-linecap: round;
+  opacity: 0.82;
+  filter: drop-shadow(0 0.035px 0.04px rgb(0 0 0 / 60%));
+}
+.training-arrow-player {
+  stroke: #2c78df;
+}
+.training-arrow-opponent {
+  stroke: #e45c3f;
+}
+.training-arrowhead {
+  stroke: none;
+  filter: none;
+}
+.training-arrowhead-player {
+  fill: #2c78df;
+}
+.training-arrowhead-opponent {
+  fill: #e45c3f;
+}
+.training-arrow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+.training-arrow-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.training-arrow-legend i {
+  width: 1.1rem;
+  height: 0.25rem;
+  border-radius: 2px;
+}
+.legend-player {
+  background: #2c78df;
+}
+.legend-opponent {
+  background: #e45c3f;
+}
+.training-page > header p,
+.training-hero > p,
+.training-card p,
+.training-panel > p {
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+.training-card:hover {
+  border-color: var(--color-accent);
+  transform: translateY(-2px);
+}
+.training-actions button,
+.training-summary button {
+  min-height: 44px;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: none;
+}
+.training-actions button:not(.secondary):not([aria-label]),
+.training-summary button:not(.secondary) {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-weight: 750;
+}
+.training-actions button.secondary,
+.training-summary button.secondary {
+  background: transparent;
+  color: var(--color-accent-strong);
+}
+.training-actions button[aria-label] {
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  color: var(--color-accent-strong);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+.training-actions button:hover:not(:disabled),
+.training-summary button:hover:not(:disabled) {
+  border-color: var(--color-accent-strong);
+  background: rgb(200 220 141 / 18%);
+  color: var(--color-accent-strong);
+  transform: translateY(-1px);
+}
+.training-actions button:not(.secondary):not([aria-label]):hover:not(:disabled),
+.training-summary button:not(.secondary):hover:not(:disabled) {
+  background: var(--color-accent-strong);
+  color: var(--color-accent-ink);
+}
+.training-actions button:active:not(:disabled),
+.training-summary button:active:not(:disabled) {
+  transform: translateY(0);
+}
+.training-actions button:disabled,
+.training-summary button:disabled {
+  border-color: var(--color-border);
+  background: rgb(255 255 255 / 6%);
+  color: rgb(245 242 232 / 48%);
+  cursor: not-allowed;
+  opacity: 1;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--color-accent-strong);
+  outline-offset: 3px;
 }
 @media (min-width: 720px) {
   .training-cards {
@@ -2174,6 +2347,31 @@ button:focus-visible {
   }
   .training-controls {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 719px) {
+  .training-nav {
+    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+  }
+  .training-nav nav {
+    display: none;
+  }
+  .training-nav .dropdown {
+    margin-left: auto;
+  }
+  .brand {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .training-home,
+  .training-page {
+    padding-inline: 1rem;
+  }
+  .training-controls {
+    grid-template-columns: 1fr;
   }
 }
 @media (prefers-reduced-motion: reduce) {

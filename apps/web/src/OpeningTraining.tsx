@@ -18,7 +18,8 @@ import {
 } from "@chess-coach/engine";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserStockfishEngine } from "./engineClient";
-import { TrainingBoard } from "./TrainingBoard";
+import { TrainingBoard, type TrainingBoardArrow } from "./TrainingBoard";
+import { TrainingSelect } from "./TrainingSelect";
 
 const matchCopy: Record<OpeningMatchKindV1, string> = {
   main: "Movimiento principal del repertorio.",
@@ -44,6 +45,16 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function arrowFromUci(uci: string, color: TrainingBoardArrow["color"]) {
+  return /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)
+    ? ({
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        color,
+      } satisfies TrainingBoardArrow)
+    : undefined;
+}
+
 export function OpeningTraining({
   course,
   onContinueGame,
@@ -56,11 +67,12 @@ export function OpeningTraining({
   const [practice, setPractice] = useState<GameSession>(() =>
     loadPosition(course.nodes[0]!.fen),
   );
+  const [practiceArrows, setPracticeArrows] = useState<
+    readonly TrainingBoardArrow[]
+  >([]);
   const [notice, setNotice] = useState("");
-  const [isAutoplaying, setIsAutoplaying] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisRetry, setAnalysisRetry] = useState(0);
-  const timer = useRef<number | undefined>(undefined);
   const engine = useRef<ChessEngine | undefined>(undefined);
   const analysisController = useRef<AbortController | undefined>(undefined);
   const analysisVersion = useRef(0);
@@ -77,23 +89,23 @@ export function OpeningTraining({
       ),
     [course, practice.fen],
   );
-
-  useEffect(() => {
-    if (mode !== "explain" || !isAutoplaying) return;
-    timer.current = window.setInterval(() => {
-      setStep((value) => {
-        if (value >= course.explanationSteps.length - 1) {
-          setIsAutoplaying(false);
-          return value;
-        }
-        return value + 1;
-      });
-    }, 1800);
-    return () => {
-      if (timer.current !== undefined) window.clearInterval(timer.current);
-      timer.current = undefined;
-    };
-  }, [course.explanationSteps.length, isAutoplaying, mode]);
+  const explanationArrows = useMemo(() => {
+    const player = current.recommendedMove
+      ? arrowFromUci(current.recommendedMove, "player")
+      : undefined;
+    const edge = currentNode?.moves.find(
+      (move) => move.uci === current.recommendedMove,
+    );
+    const replyNode = edge
+      ? course.nodes.find((node) => node.positionKey === edge.target)
+      : undefined;
+    const opponent = replyNode?.moves[0]
+      ? arrowFromUci(replyNode.moves[0].uci, "opponent")
+      : undefined;
+    return [player, opponent].filter(
+      (arrow): arrow is TrainingBoardArrow => arrow !== undefined,
+    );
+  }, [course.nodes, current, currentNode]);
 
   useEffect(
     () => () => {
@@ -117,19 +129,15 @@ export function OpeningTraining({
       setIsAnalyzing(false);
       return;
     }
-
     const controller = new AbortController();
     analysisController.current = controller;
     setIsAnalyzing(true);
     setNotice("Analizando respuestas…");
-    const repertoireMoves = practiceNode.moves
-      .slice(0, 3)
-      .map((move) => move.uci);
     const request = {
       id: `opening:${course.id}:${requestVersion}`,
       fen: practice.fen,
       perspective: color,
-      repertoireMoves,
+      repertoireMoves: practiceNode.moves.slice(0, 3).map((move) => move.uci),
       limit: { kind: "time" as const, milliseconds: 500 },
       candidateLimit: { kind: "time" as const, milliseconds: 350 },
     };
@@ -158,6 +166,11 @@ export function OpeningTraining({
               ? applyUciMove(currentPractice, reply.move)
               : currentPractice,
           );
+          const opponent = arrowFromUci(reply.move, "opponent");
+          setPracticeArrows((arrows) => [
+            ...arrows.filter((arrow) => arrow.color !== "opponent"),
+            ...(opponent ? [opponent] : []),
+          ]);
           setNotice(
             reply.source === "opening"
               ? "Respuesta de repertorio verificada por el motor local."
@@ -180,6 +193,7 @@ export function OpeningTraining({
       });
     return () => controller.abort();
   }, [
+    analysisRetry,
     available,
     collectEvidence,
     color,
@@ -189,34 +203,22 @@ export function OpeningTraining({
     practice.fen,
     practice.turn,
     practiceNode,
-    analysisRetry,
   ]);
 
-  const nextStep = () =>
-    setStep((value) => Math.min(course.explanationSteps.length - 1, value + 1));
-  const autoplay = () => {
-    setIsAutoplaying((value) => !value);
-    setNotice(
-      isAutoplaying
-        ? "Reproducción detenida."
-        : "Reproducción automática activa.",
-    );
-  };
-  const selectMode = (nextMode: "explain" | "practice") => {
-    setMode(nextMode);
-    if (nextMode !== "explain") setIsAutoplaying(false);
-  };
+  const selectMode = (nextMode: "explain" | "practice") => setMode(nextMode);
   const resetPractice = () => {
     analysisController.current?.abort();
     setPractice(loadPosition(course.nodes[0]!.fen));
+    setPracticeArrows([]);
     setNotice("");
   };
   const play = (uci: string) => {
     if (isAnalyzing || practice.turn !== color) return;
     try {
       const match = matchOpeningPositionV1(course, practice.fen, uci);
-      const after = applyUciMove(practice, uci);
-      setPractice(after);
+      setPractice(applyUciMove(practice, uci));
+      const player = arrowFromUci(uci, "player");
+      setPracticeArrows(player ? [player] : []);
       setNotice(
         `${matchCopy[match.kind]}${match.kind === "outside" ? " Puedes reintentar o continuar fuera del repertorio." : ""}`,
       );
@@ -239,34 +241,30 @@ export function OpeningTraining({
         </p>
       </header>
       <div className="training-controls">
-        <label className="training-field">
-          Color{" "}
-          <select
-            value={color}
-            onChange={(event) => setColor(event.target.value as PlayerColor)}
-          >
-            <option value="white">Blancas</option>
-            <option value="black">Negras</option>
-          </select>
-        </label>
-        <label className="training-field">
-          Apertura{" "}
-          <select value={course.id} onChange={() => undefined}>
-            <option value={course.id}>{course.name}</option>
-          </select>
-        </label>
-        <label className="training-field">
-          Modo{" "}
-          <select
-            value={mode}
-            onChange={(event) =>
-              selectMode(event.target.value as "explain" | "practice")
-            }
-          >
-            <option value="explain">Explicación</option>
-            <option value="practice">Práctica</option>
-          </select>
-        </label>
+        <TrainingSelect
+          label="Color"
+          value={color}
+          onChange={setColor}
+          options={[
+            { value: "white", label: "Blancas" },
+            { value: "black", label: "Negras" },
+          ]}
+        />
+        <TrainingSelect
+          label="Apertura"
+          value={course.id}
+          onChange={() => undefined}
+          options={[{ value: course.id, label: course.name }]}
+        />
+        <TrainingSelect
+          label="Modo"
+          value={mode}
+          onChange={selectMode}
+          options={[
+            { value: "explain", label: "Explicación" },
+            { value: "practice", label: "Práctica" },
+          ]}
+        />
       </div>
       {!available ? (
         <p role="alert">Esta apertura MVP se practica con blancas.</p>
@@ -274,12 +272,13 @@ export function OpeningTraining({
         <div className="training-layout">
           <TrainingBoard
             game={loadPosition(currentNode?.fen ?? course.nodes[0]!.fen)}
-            orientation="white"
+            orientation={color}
             onMove={() => undefined}
             highlights={current.highlightedSquares}
+            arrows={explanationArrows}
           />
           <aside className="training-panel">
-            <p>
+            <p aria-live="polite">
               Paso {step + 1} de {course.explanationSteps.length}
             </p>
             <h2>{current.title}</h2>
@@ -290,26 +289,30 @@ export function OpeningTraining({
             <p>
               <strong>Objetivo:</strong> {course.generalObjective}
             </p>
+            <ArrowLegend context="tu plan" />
             <div className="training-actions">
               <button
                 type="button"
+                aria-label="Paso anterior de la explicación"
                 onClick={() => setStep((value) => Math.max(0, value - 1))}
                 disabled={step === 0}
               >
-                Atrás
+                ←
               </button>
               <button
                 type="button"
-                onClick={nextStep}
+                aria-label="Paso siguiente de la explicación"
+                onClick={() =>
+                  setStep((value) =>
+                    Math.min(course.explanationSteps.length - 1, value + 1),
+                  )
+                }
                 disabled={step === course.explanationSteps.length - 1}
               >
-                Adelante
-              </button>
-              <button type="button" className="secondary" onClick={autoplay}>
-                {isAutoplaying ? "Detener" : "Autoplay"}
+                →
               </button>
               <button type="button" onClick={() => selectMode("practice")}>
-                Pasar a práctica
+                Practicar
               </button>
             </div>
             <p role="status" aria-live="polite">
@@ -321,13 +324,15 @@ export function OpeningTraining({
         <div className="training-layout">
           <TrainingBoard
             game={practice}
-            orientation="white"
+            orientation={color}
             onMove={play}
             disabled={isAnalyzing || practice.turn !== color}
+            arrows={practiceArrows}
           />
           <aside className="training-panel">
             <h2>Práctica guiada</h2>
             <p>{course.description}</p>
+            <ArrowLegend context="tu última jugada" />
             <p role="status" aria-live="polite">
               {notice || "Juega una jugada del repertorio."}
             </p>
@@ -370,5 +375,20 @@ export function OpeningTraining({
         </div>
       )}
     </section>
+  );
+}
+
+function ArrowLegend({ context }: { readonly context: string }) {
+  return (
+    <p className="training-arrow-legend">
+      <span>
+        <i className="legend-player" aria-hidden="true" />
+        Azul: {context}
+      </span>
+      <span>
+        <i className="legend-opponent" aria-hidden="true" />
+        Rojo: respuesta rival
+      </span>
+    </p>
   );
 }

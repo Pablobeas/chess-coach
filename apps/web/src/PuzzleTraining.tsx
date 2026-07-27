@@ -10,6 +10,7 @@ import {
 import { loadPosition } from "@chess-coach/chess-core";
 import { useEffect, useState } from "react";
 import { TrainingBoard } from "./TrainingBoard";
+import { TrainingSelect } from "./TrainingSelect";
 
 function newSession(puzzle: PuzzleV1) {
   return createPuzzleSessionV1(puzzle);
@@ -66,23 +67,15 @@ export function PuzzleTraining({
           {puzzle.difficulty}
         </p>
       </header>
-      <label className="training-field">
-        Ejercicio{" "}
-        <select
-          value={puzzle.id}
-          onChange={(event) =>
-            setIndex(
-              puzzles.findIndex((item) => item.id === event.target.value),
-            )
-          }
-        >
-          {puzzles.map((item) => (
-            <option value={item.id} key={item.id}>
-              {item.objective}
-            </option>
-          ))}
-        </select>
-      </label>
+      <TrainingSelect
+        label="Ejercicio"
+        value={puzzle.id}
+        options={puzzles.map((item) => ({
+          value: item.id,
+          label: item.objective,
+        }))}
+        onChange={(id) => setIndex(puzzles.findIndex((item) => item.id === id))}
+      />
       <div className="training-layout">
         <TrainingBoard
           game={loadPosition(session.fen)}

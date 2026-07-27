@@ -24,6 +24,31 @@ test.describe("training routes and persistence", () => {
     await expect(page.getByRole("menu")).toHaveCount(0);
   });
 
+  test("mobile route menu has no horizontal overflow and restores focus after selection", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/#/");
+    const metrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+    const trigger = page.getByRole("button", { name: "Menú de rutas" });
+    await trigger.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "Puzles" }).click();
+    await expect(page).toHaveURL(/#\/puzzles$/);
+    await expect(page.getByRole("heading", { name: "Puzles" })).toBeVisible();
+    await page.goto("/#/");
+    await trigger.click();
+    await page.getByRole("menuitem", { name: "Aperturas" }).click();
+    await expect(page).toHaveURL(/#\/openings$/);
+  });
+
   test("puzzle wrong move, hint, solve and progress persist", async ({
     page,
   }) => {
@@ -57,13 +82,25 @@ test.describe("training routes and persistence", () => {
     await expect(
       page.getByRole("heading", { name: "Aperturas" }),
     ).toBeVisible();
-    await page.getByLabel("Color").selectOption("black");
+    await expect(page.locator(".training-arrow-player")).not.toHaveCount(0);
+    await expect(page.locator(".training-arrow-opponent")).not.toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Autoplay/ })).toHaveCount(0);
+    await page.getByRole("button", { name: /Paso siguiente/ }).click();
+    await expect(page.getByText("Paso 2 de 3")).toBeVisible();
+    await page.getByRole("button", { name: /Paso anterior/ }).click();
+    await expect(page.getByText("Paso 1 de 3")).toBeVisible();
+    await page.getByRole("button", { name: "Color Blancas" }).click();
+    await page.getByRole("option", { name: "Negras" }).click();
     await expect(page.getByRole("alert")).toContainText(/practica con blancas/);
-    await page.getByLabel("Color").selectOption("white");
-    await page.getByLabel("Modo").selectOption("practice");
+    await page.getByRole("button", { name: "Color Negras" }).click();
+    await page.getByRole("option", { name: "Blancas" }).click();
+    await page.getByRole("button", { name: "Modo Explicación" }).click();
+    await page.getByRole("option", { name: "Práctica" }).click();
     await expect(
       page.getByRole("heading", { name: "Práctica guiada" }),
     ).toBeVisible();
+    await expect(page.getByText("Azul: tu última jugada")).toBeVisible();
+    await expect(page.getByText("Rojo: respuesta rival")).toBeVisible();
     await page.getByRole("button", { name: "Continuar como partida" }).click();
     await expect(page).toHaveURL(/#\/game$/);
   });

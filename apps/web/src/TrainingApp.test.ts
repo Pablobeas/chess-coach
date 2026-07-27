@@ -12,6 +12,7 @@ import { PuzzleTraining } from "./PuzzleTraining";
 import { vi } from "vitest";
 import type { ChessEngine } from "@chess-coach/engine";
 import { TrainingApp, routeFromHash } from "./TrainingApp";
+import { TrainingSelect } from "./TrainingSelect";
 
 describe("training navigation", () => {
   it("accepts only the four hash routes", () => {
@@ -56,11 +57,35 @@ describe("training navigation", () => {
   });
 });
 
-describe("opening autoplay", () => {
+async function selectTrainingOption(
+  container: HTMLElement,
+  label: string,
+  option: string,
+) {
+  const trigger = [
+    ...container.querySelectorAll<HTMLButtonElement>("button"),
+  ].find(
+    (button) =>
+      button.getAttribute("aria-labelledby")?.includes("label") &&
+      button.textContent?.includes(label),
+  );
+  // The accessible label is on the neighbouring span; selecting by visible value is resilient to generated ids.
+  const control =
+    trigger ??
+    [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("Explicación"),
+    )!;
+  await act(async () => control.click());
+  const choice = [
+    ...container.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+  ].find((button) => button.textContent === option)!;
+  await act(async () => choice.click());
+}
+
+describe("opening explanation navigation", () => {
   let root: Root;
   let container: HTMLDivElement;
   beforeEach(() => {
-    vi.useFakeTimers();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -68,9 +93,8 @@ describe("opening autoplay", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
-    vi.useRealTimers();
   });
-  it("stops and re-renders at the final step, and cancels when leaving explanation", async () => {
+  it("uses explicit arrow navigation and never renders autoplay controls", async () => {
     await act(async () =>
       root.render(
         createElement(OpeningTraining, {
@@ -79,27 +103,31 @@ describe("opening autoplay", () => {
         }),
       ),
     );
-    const autoplay = () =>
-      [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-        (button) =>
-          button.textContent === "Autoplay" || button.textContent === "Detener",
-      )!;
-    await act(async () => autoplay().click());
-    expect(autoplay().textContent).toBe("Detener");
-    await act(async () => {
-      vi.advanceTimersByTime(5_400);
-    });
-    expect(container.textContent).toContain("Paso 3 de 3");
-    expect(autoplay().textContent).toBe("Autoplay");
-    await act(async () => autoplay().click());
-    const mode = container.querySelectorAll<HTMLSelectElement>("select")[2]!;
-    await act(async () => {
-      mode.value = "practice";
-      mode.dispatchEvent(new Event("change", { bubbles: true }));
-      vi.advanceTimersByTime(5_400);
-    });
+    expect(container.textContent).toContain("Paso 1 de 3");
+    const next = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Paso siguiente de la explicación"]',
+    )!;
+    await act(async () => next.click());
+    expect(container.textContent).toContain("Paso 2 de 3");
+    expect(container.textContent).not.toContain("Autoplay");
+    expect(
+      container.querySelectorAll(".training-arrow-player").length,
+    ).toBeGreaterThan(0);
+    expect(
+      container.querySelectorAll(".training-arrow-opponent").length,
+    ).toBeGreaterThan(0);
+    expect(container.querySelector(".training-board-arrows marker")).toBeNull();
+    expect(
+      container.querySelectorAll(".training-arrowhead").length,
+    ).toBeGreaterThan(0);
+    expect(
+      container.querySelector(".training-arrowhead-player"),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".training-arrowhead")?.getAttribute("points"),
+    ).not.toContain("NaN");
+    await selectTrainingOption(container, "Modo", "Práctica");
     expect(container.textContent).toContain("Práctica guiada");
-    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -129,11 +157,7 @@ describe("opening game handoff", () => {
   });
   it("consumes the opening FEN once so a later game visit restores the played workspace", async () => {
     await act(async () => root.render(createElement(TrainingApp)));
-    const mode = container.querySelectorAll<HTMLSelectElement>("select")[2]!;
-    await act(async () => {
-      mode.value = "practice";
-      mode.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectTrainingOption(container, "Modo", "Práctica");
     const continueButton = [
       ...container.querySelectorAll<HTMLButtonElement>("button"),
     ].find((button) => button.textContent === "Continuar como partida")!;
@@ -181,11 +205,7 @@ describe("opening engine evidence", () => {
         }),
       ),
     );
-    const mode = container.querySelectorAll<HTMLSelectElement>("select")[2]!;
-    await act(async () => {
-      mode.value = "practice";
-      mode.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectTrainingOption(container, "Modo", "Práctica");
     const square = (name: string) =>
       container.querySelector<HTMLButtonElement>(
         `button[aria-label^="${name},"]`,
@@ -339,6 +359,60 @@ describe("dropdown", () => {
     await act(async () => item.click());
     expect(container.querySelector('[role="menu"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+});
+
+describe("training select", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+  it("supports keyboard selection, Escape focus restoration, and outside dismissal", async () => {
+    const changes: string[] = [];
+    await act(async () =>
+      root.render(
+        createElement(TrainingSelect, {
+          label: "Ejercicio",
+          value: "one",
+          options: [
+            { value: "one", label: "Uno" },
+            { value: "two", label: "Dos" },
+          ],
+          onChange: (value) => changes.push(value),
+        }),
+      ),
+    );
+    const trigger = container.querySelector<HTMLButtonElement>("button")!;
+    await act(async () => trigger.click());
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull();
+    await act(async () =>
+      trigger.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      ),
+    );
+    expect(changes).toEqual(["two"]);
+    await act(async () => trigger.click());
+    await act(async () =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    await act(async () => trigger.click());
+    await act(async () =>
+      document.body.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true }),
+      ),
+    );
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
   });
 });
 

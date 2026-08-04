@@ -9,6 +9,7 @@ import {
   chooseOpeningReplyV1,
   matchOpeningPositionV1,
   type OpeningCourseV1,
+  type OpeningExplanationStepV1,
   type OpeningMatchKindV1,
 } from "@chess-coach/coach";
 import {
@@ -28,6 +29,35 @@ const matchCopy: Record<OpeningMatchKindV1, string> = {
   outside: "Movimiento fuera del repertorio.",
 };
 
+export type ExplanationPhase = "learner" | "reply" | "complete";
+export type OpeningLessonLine = {
+  readonly learnerMove: string | undefined;
+  readonly replyMove: string | undefined;
+  readonly replyTarget: string | undefined;
+};
+
+/** Reads the linked graph; it never guesses a rival move for lesson playback. */
+export function expectedOpeningLessonLine(
+  course: OpeningCourseV1,
+  step: OpeningExplanationStepV1,
+): OpeningLessonLine {
+  const node = course.nodes.find(
+    (item) => item.positionKey === step.positionKey,
+  );
+  const learnerEdge = node?.moves.find(
+    (move) => move.uci === step.recommendedMove,
+  );
+  const replyNode = learnerEdge
+    ? course.nodes.find((item) => item.positionKey === learnerEdge.target)
+    : undefined;
+  const reply = replyNode?.moves.find((move) => move.kind === "main");
+  return {
+    learnerMove: step.recommendedMove,
+    replyMove: reply?.uci,
+    replyTarget: reply?.target,
+  };
+}
+
 export type OpeningEvidenceCollector = (
   engine: ChessEngine,
   request: Parameters<typeof collectOpeningEvidence>[1],
@@ -35,7 +65,9 @@ export type OpeningEvidenceCollector = (
 ) => Promise<OpeningEvidenceResult>;
 
 export interface OpeningTrainingProps {
-  readonly course: OpeningCourseV1;
+  /** Kept for callers with a single persisted course. */
+  readonly course?: OpeningCourseV1;
+  readonly courses?: readonly OpeningCourseV1[];
   readonly onContinueGame: (fen: string) => void;
   readonly engineFactory?: () => ChessEngine;
   readonly collectEvidence?: OpeningEvidenceCollector;
@@ -44,9 +76,11 @@ export interface OpeningTrainingProps {
 function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
-
-function arrowFromUci(uci: string, color: TrainingBoardArrow["color"]) {
-  return /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)
+function arrowFromUci(
+  uci: string | undefined,
+  color: TrainingBoardArrow["color"],
+) {
+  return uci && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)
     ? ({
         from: uci.slice(0, 2),
         to: uci.slice(2, 4),
@@ -54,18 +88,31 @@ function arrowFromUci(uci: string, color: TrainingBoardArrow["color"]) {
       } satisfies TrainingBoardArrow)
     : undefined;
 }
+function courseStart(course: OpeningCourseV1): GameSession {
+  return loadPosition(course.nodes[0]!.fen);
+}
 
 export function OpeningTraining({
-  course,
+  course: suppliedCourse,
+  courses,
   onContinueGame,
   engineFactory = createBrowserStockfishEngine,
   collectEvidence = collectOpeningEvidence,
 }: OpeningTrainingProps) {
+  const catalog = courses ?? (suppliedCourse ? [suppliedCourse] : []);
+  if (catalog.length === 0)
+    throw new RangeError("Opening training requires a course");
+  const [courseId, setCourseId] = useState(
+    () => suppliedCourse?.id ?? catalog[0]!.id,
+  );
+  const course = catalog.find((item) => item.id === courseId) ?? catalog[0]!;
   const [color, setColor] = useState<PlayerColor>("white");
   const [mode, setMode] = useState<"explain" | "practice">("explain");
   const [step, setStep] = useState(0);
+  const [explainFen, setExplainFen] = useState(() => courseStart(course).fen);
+  const [phase, setPhase] = useState<ExplanationPhase>("learner");
   const [practice, setPractice] = useState<GameSession>(() =>
-    loadPosition(course.nodes[0]!.fen),
+    courseStart(course),
   );
   const [practiceArrows, setPracticeArrows] = useState<
     readonly TrainingBoardArrow[]
@@ -78,10 +125,11 @@ export function OpeningTraining({
   const analysisVersion = useRef(0);
   const available = course.supportedColors.includes(color);
   const current = course.explanationSteps[step]!;
-  const currentNode = useMemo(
-    () => course.nodes.find((node) => node.positionKey === current.positionKey),
+  const lessonLine = useMemo(
+    () => expectedOpeningLessonLine(course, current),
     [course, current],
   );
+  const explainGame = useMemo(() => loadPosition(explainFen), [explainFen]);
   const practiceNode = useMemo(
     () =>
       course.nodes.find(
@@ -89,23 +137,38 @@ export function OpeningTraining({
       ),
     [course, practice.fen],
   );
-  const explanationArrows = useMemo(() => {
-    const player = current.recommendedMove
-      ? arrowFromUci(current.recommendedMove, "player")
-      : undefined;
-    const edge = currentNode?.moves.find(
-      (move) => move.uci === current.recommendedMove,
-    );
-    const replyNode = edge
-      ? course.nodes.find((node) => node.positionKey === edge.target)
-      : undefined;
-    const opponent = replyNode?.moves[0]
-      ? arrowFromUci(replyNode.moves[0].uci, "opponent")
-      : undefined;
-    return [player, opponent].filter(
-      (arrow): arrow is TrainingBoardArrow => arrow !== undefined,
-    );
-  }, [course.nodes, current, currentNode]);
+  const explanationArrows = useMemo(
+    () =>
+      [
+        arrowFromUci(lessonLine.learnerMove, "player"),
+        arrowFromUci(lessonLine.replyMove, "opponent"),
+      ].filter((arrow): arrow is TrainingBoardArrow => arrow !== undefined),
+    [lessonLine],
+  );
+
+  const resetExplanation = (nextStep = 0, nextCourse = course) => {
+    const next = nextCourse.explanationSteps[nextStep]!;
+    const node =
+      nextCourse.nodes.find((item) => item.positionKey === next.positionKey) ??
+      nextCourse.nodes[0]!;
+    setStep(nextStep);
+    setExplainFen(node.fen);
+    setPhase("learner");
+    setNotice("");
+  };
+  const selectCourse = (nextId: string) => {
+    const nextCourse = catalog.find((item) => item.id === nextId);
+    if (!nextCourse) return;
+    analysisController.current?.abort();
+    setCourseId(nextId);
+    setColor("white");
+    setMode("explain");
+    setPractice(courseStart(nextCourse));
+    setPracticeArrows([]);
+    setIsAnalyzing(false);
+    setAnalysisRetry(0);
+    resetExplanation(0, nextCourse);
+  };
 
   useEffect(
     () => () => {
@@ -114,7 +177,6 @@ export function OpeningTraining({
     },
     [],
   );
-
   useEffect(() => {
     analysisController.current?.abort();
     const requestVersion = ++analysisVersion.current;
@@ -122,7 +184,7 @@ export function OpeningTraining({
       mode !== "practice" ||
       !available ||
       practice.turn === color ||
-      practiceNode === undefined ||
+      !practiceNode ||
       practiceNode.moves.length === 0 ||
       practiceNode.isOpeningEnd
     ) {
@@ -205,12 +267,65 @@ export function OpeningTraining({
     practiceNode,
   ]);
 
-  const selectMode = (nextMode: "explain" | "practice") => setMode(nextMode);
-  const resetPractice = () => {
-    analysisController.current?.abort();
-    setPractice(loadPosition(course.nodes[0]!.fen));
-    setPracticeArrows([]);
-    setNotice("");
+  const playExplanation = (uci: string) => {
+    const expected =
+      phase === "learner"
+        ? lessonLine.learnerMove
+        : phase === "reply"
+          ? lessonLine.replyMove
+          : undefined;
+    if (!expected) {
+      setNotice(
+        phase === "complete"
+          ? "Lección completada."
+          : "Esta línea no tiene una respuesta principal verificable; puedes pasar al siguiente paso.",
+      );
+      return;
+    }
+    if (uci !== expected) {
+      setNotice(
+        "Ese movimiento es legal, pero no es el movimiento de esta lección. Reintenta sin cambiar la posición.",
+      );
+      return;
+    }
+    try {
+      const after = applyUciMove(explainGame, uci);
+      if (phase === "learner") {
+        setExplainFen(after.fen);
+        setPhase("reply");
+        setNotice(
+          "Bien. Ahora ejecuta la respuesta principal marcada en rojo.",
+        );
+        return;
+      }
+      const nextStep = step + 1;
+      if (nextStep < course.explanationSteps.length) {
+        const next = course.explanationSteps[nextStep]!;
+        if (positionKeyForFen(after.fen) !== next.positionKey) {
+          setNotice(
+            "La respuesta no enlaza con el siguiente paso; la posición se conserva para reintentar.",
+          );
+          return;
+        }
+        resetExplanation(nextStep);
+        setNotice("Respuesta correcta. Continúa con el siguiente paso.");
+        return;
+      }
+      if (
+        course.targetPosition &&
+        positionKeyForFen(after.fen) !== course.targetPosition
+      ) {
+        setNotice(
+          "La respuesta no alcanza la posición objetivo; la posición se conserva para reintentar.",
+        );
+        return;
+      }
+      setExplainFen(after.fen);
+      setPhase("complete");
+      setNotice("Lección completada: alcanzaste la posición objetivo.");
+    } catch {
+      setNotice("Movimiento no legal. Reintenta la posición.");
+    }
   };
   const play = (uci: string) => {
     if (isAnalyzing || practice.turn !== color) return;
@@ -226,10 +341,19 @@ export function OpeningTraining({
       setNotice("Movimiento no legal. Reintenta la posición.");
     }
   };
-  const cancelAnalysis = () => {
+  const resetPractice = () => {
     analysisController.current?.abort();
-    setNotice("Análisis cancelado. No se aplicó ninguna respuesta automática.");
+    setPractice(courseStart(course));
+    setPracticeArrows([]);
+    setNotice("");
   };
+  const navigateStep = (direction: -1 | 1) =>
+    resetExplanation(
+      Math.max(
+        0,
+        Math.min(course.explanationSteps.length - 1, step + direction),
+      ),
+    );
 
   return (
     <section className="training-page" aria-labelledby="openings-title">
@@ -239,6 +363,7 @@ export function OpeningTraining({
         <p>
           {course.name} · {course.eco}
         </p>
+        <p>{course.generalObjective}</p>
       </header>
       <div className="training-controls">
         <TrainingSelect
@@ -253,13 +378,16 @@ export function OpeningTraining({
         <TrainingSelect
           label="Apertura"
           value={course.id}
-          onChange={() => undefined}
-          options={[{ value: course.id, label: course.name }]}
+          onChange={selectCourse}
+          options={catalog.map((item) => ({
+            value: item.id,
+            label: `${item.name} · ${item.eco}`,
+          }))}
         />
         <TrainingSelect
           label="Modo"
           value={mode}
-          onChange={selectMode}
+          onChange={setMode}
           options={[
             { value: "explain", label: "Explicación" },
             { value: "practice", label: "Práctica" },
@@ -267,13 +395,14 @@ export function OpeningTraining({
         />
       </div>
       {!available ? (
-        <p role="alert">Esta apertura MVP se practica con blancas.</p>
+        <p role="alert">Esta apertura no está disponible con ese color.</p>
       ) : mode === "explain" ? (
         <div className="training-layout">
           <TrainingBoard
-            game={loadPosition(currentNode?.fen ?? course.nodes[0]!.fen)}
+            game={explainGame}
             orientation={color}
-            onMove={() => undefined}
+            onMove={playExplanation}
+            disabled={phase === "complete"}
             highlights={current.highlightedSquares}
             arrows={explanationArrows}
           />
@@ -286,15 +415,24 @@ export function OpeningTraining({
             <p>
               <strong>Plan:</strong> {current.futurePlan}
             </p>
-            <p>
-              <strong>Objetivo:</strong> {course.generalObjective}
+            <ArrowLegend
+              context={
+                phase === "reply" ? "respuesta ejecutada" : "tu movimiento"
+              }
+            />
+            <p role="status" aria-live="polite">
+              {notice ||
+                (phase === "learner"
+                  ? "Ejecuta el movimiento azul."
+                  : phase === "reply"
+                    ? "Ejecuta la respuesta roja."
+                    : "Lección completada.")}
             </p>
-            <ArrowLegend context="tu plan" />
             <div className="training-actions">
               <button
                 type="button"
                 aria-label="Paso anterior de la explicación"
-                onClick={() => setStep((value) => Math.max(0, value - 1))}
+                onClick={() => navigateStep(-1)}
                 disabled={step === 0}
               >
                 ←
@@ -302,22 +440,15 @@ export function OpeningTraining({
               <button
                 type="button"
                 aria-label="Paso siguiente de la explicación"
-                onClick={() =>
-                  setStep((value) =>
-                    Math.min(course.explanationSteps.length - 1, value + 1),
-                  )
-                }
+                onClick={() => navigateStep(1)}
                 disabled={step === course.explanationSteps.length - 1}
               >
                 →
               </button>
-              <button type="button" onClick={() => selectMode("practice")}>
+              <button type="button" onClick={() => setMode("practice")}>
                 Practicar
               </button>
             </div>
-            <p role="status" aria-live="polite">
-              {notice}
-            </p>
           </aside>
         </div>
       ) : (
@@ -340,7 +471,12 @@ export function OpeningTraining({
               <button
                 type="button"
                 className="secondary"
-                onClick={cancelAnalysis}
+                onClick={() => {
+                  analysisController.current?.abort();
+                  setNotice(
+                    "Análisis cancelado. No se aplicó ninguna respuesta automática.",
+                  );
+                }}
               >
                 Cancelar análisis
               </button>
@@ -360,7 +496,7 @@ export function OpeningTraining({
               <button
                 type="button"
                 className="secondary"
-                onClick={() => selectMode("explain")}
+                onClick={() => setMode("explain")}
               >
                 Ver explicación
               </button>

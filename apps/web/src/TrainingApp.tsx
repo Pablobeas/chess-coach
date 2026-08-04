@@ -1,4 +1,4 @@
-import { ITALIAN_OPENING_COURSE_V1, PUZZLES_V1 } from "@chess-coach/coach";
+import { OPENING_COURSES_V1, PUZZLES_V1 } from "@chess-coach/coach";
 import { useEffect, useState } from "react";
 import { App } from "./App";
 import { Dropdown, DropdownProvider } from "./Dropdown";
@@ -140,7 +140,7 @@ export function TrainingApp() {
       {route === "/openings" ? (
         <main id="main-content">
           <OpeningTraining
-            course={ITALIAN_OPENING_COURSE_V1}
+            courses={OPENING_COURSES_V1}
             onContinueGame={continueGame}
           />
         </main>

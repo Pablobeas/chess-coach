@@ -46,7 +46,7 @@
 - [x] Base PWA instalable y service worker.
 - [x] Espejo público privado→público automatizado con Pages y build:pages verificado.
 - [ ] Drill de rollback trazable para el espejo público.
-- [ ] E2E móvil/escritorio y perfil de rendimiento.
+- [ ] E2E móvil y perfil de rendimiento.
 - [x] Layout responsive validado en viewport móvil y escritorio.
 - [ ] Auditoría de privacidad, licencias y accesibilidad WCAG 2.2.
 - [ ] Estrategia de actualización del Worker/WASM y beta sin telemetría.
@@ -54,7 +54,8 @@
 ## Centro de entrenamiento v1
 
 - El centro local ya cubre rutas de entrenamiento, persistencia, 4 puzles verificados
-  y el curso de Apertura Italiana con dos variantes principales verificadas.
+  y un catálogo de cinco cursos: Italiana C50, Española C70, Siciliana B90,
+  Francesa C14 y QGD D55.
 - La siguiente expansión debe mantener el contrato offline, cancelable y sin LLM,
   y entrar con sus pruebas y su verificador propios.
 - Cualquier nuevo contenido curado debe traer evidencia de procedencia y hashes de

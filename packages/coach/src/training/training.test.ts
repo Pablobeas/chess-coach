@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applyUciMove, createInitialGame } from "@chess-coach/chess-core";
+import {
+  applyUciMove,
+  createInitialGame,
+  type PositionKey,
+} from "@chess-coach/chess-core";
 import {
   ITALIAN_OPENING_COURSE_V1,
+  OPENING_COURSES_V1,
   PUZZLES_V1,
+  QUEENS_GAMBIT_DECLINED_OPENING_COURSE_V1,
+  SICILIAN_OPENING_COURSE_V1,
 } from "../training-content/mvp.js";
 import { openingPeriodForSession } from "../postgame.js";
 import {
@@ -92,6 +99,104 @@ describe("training v1", () => {
     );
     expect(match.kind).toBe("transposition");
     expect(match.objectiveQuality?.status).toBe("safe");
+  });
+
+  it("ships an extensible catalog of legal, connected opening courses", () => {
+    expect(OPENING_COURSES_V1.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(OPENING_COURSES_V1.map((course) => course.id)).size).toBe(
+      OPENING_COURSES_V1.length,
+    );
+    expect(new Set(OPENING_COURSES_V1.map((course) => course.eco)).size).toBe(
+      OPENING_COURSES_V1.length,
+    );
+
+    for (const course of OPENING_COURSES_V1) {
+      expect(validateOpeningCourseV1(course)).toBe(course);
+      expect(course.supportedColors).toEqual(["white"]);
+      expect(course.explanationSteps.length).toBeGreaterThanOrEqual(3);
+      if (course.targetPosition === undefined)
+        throw new Error("New catalog courses must declare a target position");
+      const nodes = new Map(
+        course.nodes.map((item) => [item.positionKey, item]),
+      );
+      expect(nodes.get(course.targetPosition)?.isOpeningEnd).toBe(true);
+      expect(nodes.get(course.targetPosition)?.strategicIdea).not.toMatch(
+        /alternativa/i,
+      );
+      expect(
+        course.nodes.some((item) =>
+          item.moves.some((move) => move.kind === "valid-alternative"),
+        ),
+      ).toBe(true);
+
+      const reached = new Set<PositionKey>();
+      const visit = (key: PositionKey) => {
+        if (reached.has(key)) return;
+        reached.add(key);
+        nodes.get(key)?.moves.forEach((move) => visit(move.target));
+      };
+      visit(course.root);
+      expect(reached.size).toBe(course.nodes.length);
+
+      course.explanationSteps.forEach((step, index) => {
+        const from = nodes.get(step.positionKey);
+        const learnerMove = from?.moves.find(
+          (move) => move.uci === step.recommendedMove,
+        );
+        const replyNode = learnerMove && nodes.get(learnerMove.target);
+        const mainReply = replyNode?.moves.find((move) => move.kind === "main");
+        const expected =
+          course.explanationSteps[index + 1]?.positionKey ??
+          course.targetPosition;
+        expect(mainReply?.target).toBe(expected);
+      });
+    }
+    expect(OPENING_COURSES_V1.map((course) => [course.id, course.eco])).toEqual(
+      [
+        ["italian-game-mvp", "C50"],
+        ["ruy-lopez-mvp", "C70"],
+        ["sicilian-open-basic-mvp", "B90"],
+        ["french-classical-basic-mvp", "C14"],
+        ["queens-gambit-declined-basic-mvp", "D55"],
+      ],
+    );
+    const sicilianTarget = SICILIAN_OPENING_COURSE_V1.nodes.find(
+      (node) => node.positionKey === SICILIAN_OPENING_COURSE_V1.targetPosition,
+    );
+    const qgdTarget = QUEENS_GAMBIT_DECLINED_OPENING_COURSE_V1.nodes.find(
+      (node) =>
+        node.positionKey ===
+        QUEENS_GAMBIT_DECLINED_OPENING_COURSE_V1.targetPosition,
+    );
+    expect(sicilianTarget?.strategicIdea).toBe(
+      "La estructura Najdorf con ...a6 controla b5 y prepara ...b5; las blancas suelen continuar con Ae3, f3 y Dd2.",
+    );
+    expect(qgdTarget?.strategicIdea).toBe(
+      "Las negras ya han enrocado; las blancas deben completar Cf3, Ae2/Ad3 y poner el rey a salvo.",
+    );
+  });
+
+  it("rejects a course whose teaching sequence is not connected to its target", () => {
+    const malformed = {
+      ...ITALIAN_OPENING_COURSE_V1,
+      explanationSteps: ITALIAN_OPENING_COURSE_V1.explanationSteps.map(
+        (step, index) =>
+          index === 1 ? { ...step, recommendedMove: "d2d3" } : step,
+      ),
+    };
+    expect(() => validateOpeningCourseV1(malformed)).toThrow(/connect/i);
+  });
+
+  it("accepts persisted v1 opening content without linked lesson fields", () => {
+    const { targetPosition: _targetPosition, ...withoutTarget } =
+      ITALIAN_OPENING_COURSE_V1;
+    const legacy = {
+      ...withoutTarget,
+      explanationSteps: ITALIAN_OPENING_COURSE_V1.explanationSteps.map(
+        ({ recommendedMove: _recommendedMove, ...step }) => step,
+      ),
+    };
+    expect(validateOpeningCourseV1(legacy)).toBe(legacy);
   });
 
   it("uses only injected engine evidence and falls back strongly when repertoire moves are unsafe", () => {

@@ -29,6 +29,7 @@ export interface OpeningExplanationStepV1 {
   readonly positionKey: PositionKey;
   readonly title: string;
   readonly description: string;
+  /** Optional in persisted v1 content created before linked lesson paths. */
   readonly recommendedMove?: string;
   readonly arrows: readonly BoardArrowV1[];
   readonly highlightedSquares: readonly string[];
@@ -42,6 +43,8 @@ export interface OpeningCourseV1 {
   readonly eco: string;
   readonly supportedColors: readonly PlayerColor[];
   readonly root: PositionKey;
+  /** Optional in persisted v1 content created before linked lesson paths. */
+  readonly targetPosition?: PositionKey;
   readonly nodes: readonly OpeningNodeV1[];
   readonly explanationSteps: readonly OpeningExplanationStepV1[];
   readonly description: string;
@@ -148,6 +151,17 @@ export function validateOpeningCourseV1(
   const nodes = byKey(course);
   if (nodes.size !== course.nodes.length || !nodes.has(course.root))
     throw new RangeError("Opening nodes require unique keys and a root");
+  const target =
+    course.targetPosition === undefined
+      ? undefined
+      : nodes.get(course.targetPosition);
+  if (
+    course.targetPosition !== undefined &&
+    (target === undefined || !target.isOpeningEnd)
+  )
+    throw new RangeError(
+      "Opening course target position must be an opening end",
+    );
   for (const node of course.nodes) {
     if (positionKeyForFen(node.fen) !== node.positionKey)
       throw new RangeError("Opening node key does not match FEN");
@@ -158,9 +172,41 @@ export function validateOpeningCourseV1(
         );
     }
   }
-  for (const step of course.explanationSteps)
-    if (!nodes.has(step.positionKey))
+  // Linked steps are an additive v1 content convention. Older persisted v1
+  // courses remain valid when they have neither a target nor move links.
+  if (course.targetPosition === undefined) {
+    for (const step of course.explanationSteps)
+      if (!nodes.has(step.positionKey))
+        throw new RangeError("Explanation step references an unknown node");
+    return freeze(course);
+  }
+  if (course.explanationSteps.length < 3)
+    throw new RangeError(
+      "Linked opening course requires three explanation steps",
+    );
+  for (const [index, step] of course.explanationSteps.entries()) {
+    const from = nodes.get(step.positionKey);
+    if (from === undefined)
       throw new RangeError("Explanation step references an unknown node");
+    if (step.recommendedMove === undefined)
+      throw new RangeError(
+        "Linked explanation step requires a recommended move",
+      );
+    const learnerMove = from.moves.find(
+      (move) => move.uci === step.recommendedMove,
+    );
+    const afterLearnerMove =
+      learnerMove === undefined ? undefined : nodes.get(learnerMove.target);
+    const mainReply = afterLearnerMove?.moves.find(
+      (move) => move.kind === "main",
+    );
+    const nextPosition =
+      course.explanationSteps[index + 1]?.positionKey ?? course.targetPosition;
+    if (mainReply?.target !== nextPosition)
+      throw new RangeError(
+        "Explanation step must connect through its recommended move and a main reply",
+      );
+  }
   return freeze(course);
 }
 

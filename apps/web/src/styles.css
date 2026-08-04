@@ -919,6 +919,33 @@ h1 {
 .utility-menu-panel .danger-action {
   color: var(--color-danger);
 }
+.utility-menu-captures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.utility-menu-captures .captured-tray {
+  min-width: 0;
+  padding: 8px;
+}
+.utility-menu-settings {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+.utility-menu-settings label {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+}
+.utility-menu-settings input {
+  width: 20px;
+  height: 20px;
+}
 .file-button input {
   position: absolute;
   width: 1px;
@@ -1144,9 +1171,6 @@ h1 {
   transform: translateY(-1px);
 }
 .mobile-tree-toggle {
-  display: none;
-}
-.mobile-more-toggle {
   display: none;
 }
 .mobile-evaluation {
@@ -1412,21 +1436,8 @@ button:focus-visible {
     color: var(--color-text);
     font-weight: 800;
   }
-  .utility-menu {
-    display: none;
-  }
-  .mobile-more-toggle {
-    display: inline-grid;
-    min-height: 44px;
-    place-items: center;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 11px;
-    background: var(--color-surface-raised);
-    color: var(--color-text);
-    font-weight: 800;
-  }
   .session-actions {
-    grid-template-columns: 88px minmax(0, 1fr) 72px;
+    grid-template-columns: 88px minmax(0, 1fr) auto;
     gap: 7px;
   }
   .session-actions [data-shortcut="continue"] {
@@ -1438,8 +1449,15 @@ button:focus-visible {
   .utility-menu-panel {
     position: fixed;
     z-index: 25;
+    top: max(8px, env(safe-area-inset-top));
     right: 10px;
     bottom: calc(62px + env(safe-area-inset-bottom));
+    max-height: calc(
+      100dvh - 76px - env(safe-area-inset-top) - env(safe-area-inset-bottom)
+    );
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
   }
   .feedback-dialog-backdrop {
     position: fixed;
@@ -1486,70 +1504,6 @@ button:focus-visible {
   .mobile-tree-sheet .variation-history {
     display: block;
     margin-top: 10px;
-  }
-  .mobile-more-sheet-backdrop {
-    position: fixed;
-    z-index: 36;
-    inset: 0;
-    display: grid;
-    align-items: end;
-    padding: 12px;
-    background: rgb(0 0 0 / 58%);
-  }
-  .mobile-more-sheet {
-    max-height: min(82dvh, 620px);
-    overflow: auto;
-    padding: 14px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 18px;
-    background: var(--color-surface-raised);
-    box-shadow: var(--shadow-float);
-  }
-  .mobile-captures {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin: 12px 0;
-  }
-  .mobile-captures .captured-tray {
-    display: block;
-    min-width: 0;
-  }
-  .mobile-settings {
-    display: grid;
-    gap: 10px;
-    margin: 12px 0;
-    padding: 10px;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-  }
-  .mobile-settings label {
-    display: flex;
-    min-height: 44px;
-    align-items: center;
-    gap: 9px;
-  }
-  .mobile-settings input {
-    width: 20px;
-    height: 20px;
-  }
-  .mobile-settings-note {
-    color: var(--color-text-muted);
-    font-size: 0.8rem;
-    line-height: 1.35;
-  }
-  .mobile-more-actions {
-    display: grid;
-    gap: 7px;
-  }
-  .mobile-more-actions button,
-  .mobile-more-actions .file-button {
-    min-height: 44px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 10px;
-    background: var(--color-surface);
-    color: var(--color-text);
-    font-weight: 800;
   }
   @media (orientation: landscape) {
     .shell {

@@ -177,6 +177,9 @@ tarjeta compacta sea la vista principal en móvil.
 - La evidencia visible del puzle procede del motor local y de detectores
   deterministas; la plantilla pedagógica no inventa jugadas ni sustituye la
   validación.
+- En la práctica de aperturas, la explicación permite reproducir manualmente la
+  jugada azul y la respuesta roja; una jugada incorrecta se rechaza y se puede
+  reintentar, y la navegación por flechas conserva el contexto de la línea activa.
 - La Apertura Italiana separa explicación y práctica: la explicación guía el plan y
   la práctica solo aplica una respuesta automática cuando la evidencia confirma el
   repertorio o una alternativa verificada.

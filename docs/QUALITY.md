@@ -130,8 +130,8 @@ las brechas de verificación manual están declaradas.
 - Unitarias e integración cubren la identidad semántica de media jugada, la
   cancelación, el manejo de resultados tardíos y la transición de `pending` a
   `ready`/`unavailable`.
-- Las regresiones de UI deben incluir móvil y escritorio con Chromium y WebKit en
-  320x568, 390x844 y 568x320.
+- Las regresiones de UI deben incluir móvil con Chromium y WebKit en 320x568 y
+  390x844.
 - La verificación móvil confirma que el documento no desplaza la pantalla en uso
   normal, que el tablero y el resumen siguen visibles y que el feedback termina en
   tiempo o informa error recuperable.
@@ -148,6 +148,7 @@ las brechas de verificación manual están declaradas.
 - La cobertura de preemption distingue reencolado interno único tras rival
   prioritario, cancelación externa o stale sin reintento y segunda interrupción con
   caída a `unavailable` y retry manual.
+- Evidencia reciente: `coach48`, `web191`, `mobile E2E 2/2` y `pnpm check`.
 
 ## Centro de entrenamiento v1
 

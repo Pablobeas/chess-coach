@@ -6,7 +6,10 @@ import { DEFAULT_SETTINGS } from "./persistence";
 import { App, GAME_MAIN_CONTENT_ID, initialSettingsForGame } from "./App";
 import { Dropdown, DropdownProvider } from "./Dropdown";
 import { PUZZLES_V1 } from "@chess-coach/coach";
-import { ITALIAN_OPENING_COURSE_V1 } from "@chess-coach/coach";
+import {
+  ITALIAN_OPENING_COURSE_V1,
+  OPENING_COURSES_V1,
+} from "@chess-coach/coach";
 import { OpeningTraining } from "./OpeningTraining";
 import { PuzzleTraining } from "./PuzzleTraining";
 import { vi } from "vitest";
@@ -38,6 +41,37 @@ describe("training navigation", () => {
     expect(
       container.querySelector(`main#${GAME_MAIN_CONTENT_ID}`),
     ).not.toBeNull();
+    await act(async () => root.unmount());
+    container.remove();
+  });
+  it("keeps one Más menu with mobile settings and captured pieces", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () =>
+      root.render(
+        createElement(App, {
+          initialFen:
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        }),
+      ),
+    );
+    const menus = container.querySelectorAll("details.utility-menu");
+    expect(menus).toHaveLength(1);
+    const menu = menus[0]!;
+    expect(menu.querySelector("summary")?.textContent).toContain("Más");
+    expect(
+      menu.querySelectorAll(".utility-menu-captures .captured-tray"),
+    ).toHaveLength(2);
+    const evaluation = [
+      ...menu.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    ].find((input) =>
+      input.closest("label")?.textContent?.includes("evaluación"),
+    )!;
+    expect(evaluation).toBeTruthy();
+    const previous = evaluation.checked;
+    await act(async () => evaluation.click());
+    expect(evaluation.checked).toBe(!previous);
     await act(async () => root.unmount());
     container.remove();
   });
@@ -103,12 +137,14 @@ describe("opening explanation navigation", () => {
         }),
       ),
     );
-    expect(container.textContent).toContain("Paso 1 de 3");
+    expect(container.textContent).toContain(
+      `Paso 1 de ${ITALIAN_OPENING_COURSE_V1.explanationSteps.length}`,
+    );
     const next = container.querySelector<HTMLButtonElement>(
       '[aria-label="Paso siguiente de la explicación"]',
     )!;
     await act(async () => next.click());
-    expect(container.textContent).toContain("Paso 2 de 3");
+    expect(container.textContent).toContain("Paso 2 de");
     expect(container.textContent).not.toContain("Autoplay");
     expect(
       container.querySelectorAll(".training-arrow-player").length,
@@ -128,6 +164,35 @@ describe("opening explanation navigation", () => {
     ).not.toContain("NaN");
     await selectTrainingOption(container, "Modo", "Práctica");
     expect(container.textContent).toContain("Práctica guiada");
+  });
+
+  it("requires the blue move and then the red reply before advancing", async () => {
+    await act(async () =>
+      root.render(
+        createElement(OpeningTraining, {
+          courses: OPENING_COURSES_V1,
+          onContinueGame: () => undefined,
+        }),
+      ),
+    );
+    const square = (name: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `button[aria-label^="${name},"]`,
+      )!;
+    await act(async () => square("d2").click());
+    await act(async () => square("d4").click());
+    expect(container.textContent).toContain(
+      "no es el movimiento de esta lección",
+    );
+    expect(square("e2").getAttribute("aria-label")).toContain("pieza blanca");
+    await act(async () => square("e2").click());
+    await act(async () => square("e4").click());
+    expect(container.textContent).toContain(
+      "respuesta principal marcada en rojo",
+    );
+    await act(async () => square("e7").click());
+    await act(async () => square("e5").click());
+    expect(container.textContent).toContain("Paso 2 de");
   });
 });
 

@@ -91,6 +91,8 @@ del usuario a terceros sin una funciÃ³n explÃ­cita y consentimiento informad
   atributos ARIA para lectores de pantalla.
 - El feedback visible muestra primero un resumen breve y abre el detalle completo en
   un panel desplazable.
+- El botón `Más` es único y responsive, y conserva toggles, capturas y acciones
+  agrupadas sin duplicar accesos.
 - En escritorio no se altera la composición actual.
 
 ## Centro de entrenamiento v1
@@ -99,5 +101,5 @@ del usuario a terceros sin una funciÃ³n explÃ­cita y consentimiento informad
 - Persistencia local: `chess-coach:training:v1`, con `completedPuzzleIds`, `lastPuzzleId` y `lastOpeningId`; los fallos de `localStorage` son no fatales.
 - Puzles: 4 ejercicios curados y verificados por `tools/training/verify-puzzles-v1.mjs` contra Stockfish 18 Lite WASM.
 - Verificación: `stockfish@18.0.8`, licencia `GPL-3.0`, `jsSha256` `5243FD9B276CAB7DFE3AD1D43AB9EAD73568FAC76468C614242977A210C4A391`, `wasmSha256` `A8FBC05EC6920B56D7485826DCB02C5FFD2826BCBF751CF973046F237A9096F1`, presupuesto `Hash=16 MB`, `userMoveNodes=50000`, `replyMoveNodes=50000` y `userMoveMultiPvLimit=4`.
-- Aperturas: curso de Apertura Italiana con dos respuestas verificadas en el tramo principal y dos modos, explicación y práctica.
+- Aperturas: catálogo local de cinco cursos, `Italiana C50`, `Española C70`, `Siciliana B90`, `Francesa C14` y `QGD D55`.
 - En práctica, la evidencia del motor se recoge al entrar al modo, puede cancelarse y solo activa una respuesta automática cuando la evidencia confirma o fuerza una alternativa del repertorio; si no hay evidencia válida, la posición no se mueve.

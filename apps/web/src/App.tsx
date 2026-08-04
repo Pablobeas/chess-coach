@@ -1378,13 +1378,10 @@ export function App({ initialFen }: AppProps) {
   const [retryTarget, setRetryTarget] = useState<RetryAnalysisTarget>();
   const retryLineRef = useRef<string | undefined>(undefined);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
-  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const mobileTreeTriggerRef = useRef<HTMLButtonElement>(null);
-  const mobileMoreTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileTreeCloseRef = useRef<HTMLButtonElement>(null);
-  const mobileMoreCloseRef = useRef<HTMLButtonElement>(null);
+  const utilityMenuRef = useRef<HTMLDetailsElement>(null);
   const treeWasOpenRef = useRef(false);
-  const moreWasOpenRef = useRef(false);
   useEffect(() => {
     const pending = coachPendingRef.current;
     if (
@@ -1542,28 +1539,24 @@ export function App({ initialFen }: AppProps) {
     [game, selected],
   );
   useEffect(() => {
-    if (!mobileTreeOpen && !mobileMoreOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setMobileTreeOpen(false);
-      setMobileMoreOpen(false);
+      if (mobileTreeOpen) setMobileTreeOpen(false);
+      if (utilityMenuRef.current?.open) {
+        utilityMenuRef.current.removeAttribute("open");
+        utilityMenuRef.current.querySelector<HTMLElement>("summary")?.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mobileMoreOpen, mobileTreeOpen]);
+  }, [mobileTreeOpen]);
   useEffect(() => {
     if (mobileTreeOpen) mobileTreeCloseRef.current?.focus();
     if (!mobileTreeOpen && treeWasOpenRef.current)
       mobileTreeTriggerRef.current?.focus();
     treeWasOpenRef.current = mobileTreeOpen;
   }, [mobileTreeOpen]);
-  useEffect(() => {
-    if (mobileMoreOpen) mobileMoreCloseRef.current?.focus();
-    if (!mobileMoreOpen && moreWasOpenRef.current)
-      mobileMoreTriggerRef.current?.focus();
-    moreWasOpenRef.current = mobileMoreOpen;
-  }, [mobileMoreOpen]);
 
   const beginMoveAnimation = (
     position: GameSession,
@@ -1572,6 +1565,10 @@ export function App({ initialFen }: AppProps) {
   ) => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     setMoveAnimation(createMoveAnimation(position, from, to));
+  };
+  const closeUtilityMenu = () => {
+    utilityMenuRef.current?.removeAttribute("open");
+    utilityMenuRef.current?.querySelector<HTMLElement>("summary")?.focus();
   };
 
   useEffect(() => {
@@ -3028,17 +3025,77 @@ export function App({ initialFen }: AppProps) {
               >
                 {paused ? "Reanudar" : "Pausar"}
               </button>
-              <details className="utility-menu">
+              <details ref={utilityMenuRef} className="utility-menu">
                 <summary aria-label="Abrir más acciones de partida">
                   <span aria-hidden="true">•••</span>
                   <span>Más</span>
                 </summary>
                 <div className="utility-menu-panel">
                   <p className="utility-menu-title">Opciones de partida</p>
-                  <button type="button" onClick={reset}>
+                  <section
+                    className="utility-menu-captures"
+                    aria-label="Piezas capturadas"
+                  >
+                    <CapturedTray
+                      capturer={playerColor}
+                      captured={capturedByColor[playerColor].map(
+                        (capture) => capture.piece,
+                      )}
+                      label="Capturadas por ti"
+                    />
+                    <CapturedTray
+                      capturer={engineColor}
+                      captured={capturedByColor[engineColor].map(
+                        (capture) => capture.piece,
+                      )}
+                      label={`Capturadas por ${opponentName}`}
+                    />
+                  </section>
+                  <fieldset className="utility-menu-settings">
+                    <legend>Ajustes visibles</legend>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={settings.showEvaluation}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            showEvaluation: event.target.checked,
+                          }))
+                        }
+                      />
+                      Mostrar evaluación
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={settings.showArrows}
+                        onChange={(event) =>
+                          setSettings((current) => ({
+                            ...current,
+                            showArrows: event.target.checked,
+                          }))
+                        }
+                      />
+                      Mostrar flecha de última jugada
+                    </label>
+                  </fieldset>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reset();
+                      closeUtilityMenu();
+                    }}
+                  >
                     Reiniciar partida
                   </button>
-                  <button type="button" onClick={downloadPgn}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      downloadPgn();
+                      closeUtilityMenu();
+                    }}
+                  >
                     Exportar PGN
                   </button>
                   <label className="file-button">
@@ -3048,7 +3105,10 @@ export function App({ initialFen }: AppProps) {
                       accept=".pgn,text/plain,application/x-chess-pgn"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
-                        if (file) void importPgnFile(file);
+                        if (file) {
+                          void importPgnFile(file);
+                          closeUtilityMenu();
+                        }
                         event.target.value = "";
                       }}
                     />
@@ -3057,20 +3117,15 @@ export function App({ initialFen }: AppProps) {
                   <button
                     type="button"
                     className="danger-action"
-                    onClick={abandon}
+                    onClick={() => {
+                      abandon();
+                      closeUtilityMenu();
+                    }}
                   >
                     Abandonar partida
                   </button>
                 </div>
               </details>
-              <button
-                ref={mobileMoreTriggerRef}
-                type="button"
-                className="mobile-more-toggle"
-                onClick={() => setMobileMoreOpen(true)}
-              >
-                Más
-              </button>
             </div>
             {sessionError ? (
               <div className="session-error" role="alert">
@@ -3115,113 +3170,6 @@ export function App({ initialFen }: AppProps) {
                   }}
                   onDelete={deleteWorkspaceLine}
                 />
-              </section>
-            </div>
-          ) : null}
-          {mobileMoreOpen ? (
-            <div
-              className="mobile-more-sheet-backdrop"
-              role="presentation"
-              onMouseDown={() => setMobileMoreOpen(false)}
-            >
-              <section
-                className="mobile-more-sheet"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="mobile-more-title"
-                tabIndex={-1}
-                onMouseDown={(event) => event.stopPropagation()}
-              >
-                <div className="moves-heading">
-                  <h2 id="mobile-more-title">Más acciones</h2>
-                  <button
-                    ref={mobileMoreCloseRef}
-                    type="button"
-                    className="secondary"
-                    onClick={() => setMobileMoreOpen(false)}
-                  >
-                    Cerrar
-                  </button>
-                </div>
-                <section
-                  className="mobile-captures"
-                  aria-label="Capturas actuales"
-                >
-                  <CapturedTray
-                    capturer={playerColor}
-                    captured={capturedByColor[playerColor].map(
-                      (capture) => capture.piece,
-                    )}
-                    label="Capturadas por ti"
-                  />
-                  <CapturedTray
-                    capturer={engineColor}
-                    captured={capturedByColor[engineColor].map(
-                      (capture) => capture.piece,
-                    )}
-                    label={`Capturadas por ${opponentName}`}
-                  />
-                </section>
-                <fieldset className="mobile-settings">
-                  <legend>Ajustes visibles</legend>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={settings.showEvaluation}
-                      onChange={(event) =>
-                        setSettings((current) => ({
-                          ...current,
-                          showEvaluation: event.target.checked,
-                        }))
-                      }
-                    />{" "}
-                    Mostrar evaluación
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={settings.showArrows}
-                      onChange={(event) =>
-                        setSettings((current) => ({
-                          ...current,
-                          showArrows: event.target.checked,
-                        }))
-                      }
-                    />{" "}
-                    Mostrar flecha de última jugada
-                  </label>
-                </fieldset>
-                <p className="mobile-settings-note">
-                  El color, rival y fuerza se eligen al iniciar una partida
-                  nueva; no se cambian a mitad de partida.
-                </p>
-                <div className="mobile-more-actions">
-                  <button type="button" onClick={downloadPgn}>
-                    Exportar PGN
-                  </button>
-                  <label className="file-button">
-                    Importar PGN
-                    <input
-                      type="file"
-                      accept=".pgn,text/plain,application/x-chess-pgn"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void importPgnFile(file);
-                        event.target.value = "";
-                      }}
-                    />
-                  </label>
-                  <button type="button" onClick={reset}>
-                    Reiniciar partida
-                  </button>
-                  <button
-                    type="button"
-                    className="danger-action"
-                    onClick={abandon}
-                  >
-                    Abandonar partida
-                  </button>
-                </div>
               </section>
             </div>
           ) : null}

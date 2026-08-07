@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reportar una vulnerabilidad
+    url: mailto:pbeasboc@gmail.com
+    about: Usa este canal para divulgación responsable. No abras issues públicos para seguridad.
+  - name: Reporte privado de seguridad en GitHub
+    url: https://github.com/Pablobeas/chess-coach/security/advisories/new
+    about: Usa la vía privada de GitHub para vulnerabilidades y evita issues públicos.

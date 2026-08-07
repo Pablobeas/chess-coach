@@ -162,3 +162,17 @@ las brechas de verificación manual están declaradas.
   `apps/web/src/TrainingApp.test.ts` y `tests/e2e/training-flows.spec.ts`.
 - La práctica de aperturas debe seguir siendo cancelable y no bloqueante; la evidencia
   tardía u obsoleta no puede aplicar una jugada nueva.
+
+## Umbrales
+
+- Cambios de TypeScript deben pasar `pnpm typecheck`.
+- Cambios de dominio, engine o coach deben pasar `pnpm test` con fixtures
+  representativas.
+- Cambios de UI o flujo de sesion deben cubrir Chromium y WebKit en 320x568 y
+  390x844.
+- Cambios de engine deben cubrir arranque, `ready` y busqueda con los tiempos de
+  referencia del broker: 15 s para bootstrap, 15 s para handshake y 5 s para
+  busqueda activa.
+- La interfaz no debe introducir espera sincrona en el hilo principal.
+- Una entrega publicable debe incluir `pnpm build` y `pnpm check`; para Pages,
+  tambien la validacion del artefacto generado con base `/chess-coach-play/`.

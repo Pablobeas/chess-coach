@@ -1225,9 +1225,18 @@ button:focus-visible {
     height: 100%;
     overflow: hidden;
   }
-  .shell {
-    min-height: var(--app-viewport-height);
+  /* The route navigation precedes the game shell. Allocate it its intrinsic
+   * height so the shell's visual-viewport budget does not start underneath it.
+   */
+  #root:has(.game) {
+    display: grid;
     height: var(--app-viewport-height);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .shell {
+    min-height: 0;
+    height: 100%;
     overflow: hidden;
     padding: max(10px, env(safe-area-inset-top))
       max(10px, env(safe-area-inset-right))

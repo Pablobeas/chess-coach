@@ -37,6 +37,10 @@ import {
   postgameAnalysisPositionsForTask,
   postgameReviewAutoOpenDelayMs,
   postgameReviewAutoOpenCandidate,
+  MAX_PGN_IMPORT_BYTES,
+  MAX_PGN_IMPORT_PLIES,
+  loadPgnImportFile,
+  pgnImportErrorMessage,
   readCurrentBuildId,
   resolvePostgameReviewTask,
   retryAnalysisTarget,
@@ -74,6 +78,42 @@ function playMate(uciMoves: readonly string[]) {
     createInitialGame(),
   );
 }
+
+describe("PGN import bounds", () => {
+  it("rejects an oversized file before reading its contents", async () => {
+    const text = vi.fn(async () => "1. e4 e5");
+
+    await expect(
+      loadPgnImportFile({ size: MAX_PGN_IMPORT_BYTES + 1, text }),
+    ).rejects.toThrow("supera el límite de 256 KB");
+
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  it("rejects parsed games beyond the session ply budget", async () => {
+    const pgn = Array.from(
+      { length: MAX_PGN_IMPORT_PLIES / 4 + 1 },
+      (_, index) => {
+        const whiteMoveNumber = index * 2 + 1;
+        return `${whiteMoveNumber}. Nf3 Nf6 ${whiteMoveNumber + 1}. Ng1 Ng8`;
+      },
+    ).join(" ");
+
+    await expect(
+      loadPgnImportFile({ size: pgn.length, text: async () => pgn }),
+    ).rejects.toThrow("supera el límite de 1.024 medias jugadas");
+  });
+
+  it("keeps valid PGN imports and exposes a safe Spanish error otherwise", async () => {
+    await expect(
+      loadPgnImportFile({ size: 9, text: async () => "1. e4 e5" }),
+    ).resolves.toMatchObject({ history: [{ uci: "e2e4" }, { uci: "e7e5" }] });
+
+    expect(pgnImportErrorMessage(new Error("details"))).toBe(
+      "El archivo no contiene un PGN válido o legal.",
+    );
+  });
+});
 
 describe("opponent backend labels", () => {
   it("never represents Stockfish as an exact Elo opponent", () => {

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "Si usas este proyecto, por favor cítalo."
+title: "Chess Coach"
+authors:
+  - family-names: Beas
+    given-names: Pablo
+    email: pbeasboc@gmail.com
+repository-code: "https://github.com/Pablobeas/chess-coach"
+homepage: "https://github.com/Pablobeas/chess-coach"
+license: "GPL-3.0-or-later"
+version: 0.0.0
+preferred-citation:
+  type: software
+  authors:
+    - family-names: Beas
+      given-names: Pablo
+      email: pbeasboc@gmail.com
+  title: "Chess Coach"
+  url: "https://github.com/Pablobeas/chess-coach"
+  version: 0.0.0

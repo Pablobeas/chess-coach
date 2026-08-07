@@ -2,11 +2,16 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { Chess } from "chess.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.MAIA3_BRIDGE_PORT ?? 8765);
 const ENGINE_PATH = process.env.MAIA3_ENGINE_PATH;
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_UCI_INFO_LINE_LENGTH = 1024;
+const MAX_MAIA_CANDIDATES = 20;
+const DEFAULT_QUEUE_LIMIT = 1;
+const DEFAULT_RETRY_AFTER_SECONDS = 30;
 
 export const WARMUP_TIMEOUT_MS = 60_000;
 export const MOVE_TIMEOUT_MS = 30_000;
@@ -36,6 +41,15 @@ const INITIAL_POSITION_LEGAL_MOVES = new Set([
   "g1h3",
 ]);
 
+class HttpError extends Error {
+  constructor(status, message, headers = {}) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.headers = headers;
+  }
+}
+
 export function isValidFen(value) {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value))
     return false;
@@ -54,19 +68,43 @@ export function isValidFen(value) {
       );
       return squares !== 8;
     })
-  )
+  ) {
     return false;
+  }
   if (activeColor !== "w" && activeColor !== "b") return false;
   if (
     castling !== "-" &&
     (!/^[KQkq]+$/.test(castling ?? "") ||
       new Set(castling).size !== castling.length)
-  )
+  ) {
     return false;
+  }
   if (enPassant !== "-" && !/^[a-h][36]$/.test(enPassant ?? "")) return false;
   if (!/^\d+$/.test(halfmove ?? "") || !/^[1-9]\d*$/.test(fullmove ?? ""))
     return false;
   return true;
+}
+
+function parseUciMove(move) {
+  if (typeof move !== "string" || !UCI_MOVE.test(move)) return undefined;
+  return {
+    from: move.slice(0, 2),
+    to: move.slice(2, 4),
+    ...(move.length === 5 ? { promotion: move[4] } : {}),
+  };
+}
+
+function doesHistoryReproduceFen(initialFen, moves, expectedFen) {
+  try {
+    const game = new Chess(initialFen);
+    for (const move of moves) {
+      const parsed = parseUciMove(move);
+      if (parsed === undefined || game.move(parsed) == null) return false;
+    }
+    return game.fen() === expectedFen;
+  } catch {
+    return false;
+  }
 }
 
 export function validateRequest(value) {
@@ -89,14 +127,19 @@ export function validateRequest(value) {
     typeof initialFen !== "string" ||
     initialFen.length > 120 ||
     !isValidFen(initialFen)
-  )
+  ) {
     throw new Error("FEN inicial inválido");
+  }
   if (
     !Array.isArray(moves) ||
     moves.length > 1000 ||
     moves.some((move) => typeof move !== "string" || !UCI_MOVE.test(move))
-  )
+  ) {
     throw new Error("Historial UCI inválido");
+  }
+  if (!doesHistoryReproduceFen(initialFen, moves, fen)) {
+    throw new Error("Historial y FEN no coinciden");
+  }
   if (!Number.isInteger(selfElo) || selfElo < 600 || selfElo > 2600)
     throw new Error("SelfElo debe estar entre 600 y 2600");
   if (!Number.isInteger(opponentElo) || opponentElo < 600 || opponentElo > 2600)
@@ -118,11 +161,18 @@ export function validateRequest(value) {
 }
 
 export function parseInfo(line) {
-  if (typeof line !== "string" || !line.startsWith("info ")) return undefined;
+  if (
+    typeof line !== "string" ||
+    !line.startsWith("info ") ||
+    line.length > MAX_UCI_INFO_LINE_LENGTH
+  ) {
+    return undefined;
+  }
   const move = line.match(/\bpv ([a-h][1-8][a-h][1-8][qrbn]?)/)?.[1];
   if (!move) return undefined;
   const rank = Number(line.match(/\bmultipv (\d+)/)?.[1] ?? 1);
-  if (!Number.isInteger(rank) || rank < 1) return undefined;
+  if (!Number.isInteger(rank) || rank < 1 || rank > MAX_MAIA_CANDIDATES)
+    return undefined;
   const wdl = line.match(/\bwdl (\d+) (\d+) (\d+)/);
   const wdlValues = wdl?.slice(1).map(Number);
   if (wdlValues && wdlValues.some((value) => !Number.isSafeInteger(value)))
@@ -143,11 +193,92 @@ export function parseInfo(line) {
 }
 
 function bestMoveFromLine(line) {
-  const move =
-    typeof line === "string"
-      ? line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?|0000)(?:\s|$)/)?.[1]
-      : undefined;
-  return move;
+  return typeof line === "string"
+    ? line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?|0000)(?:\s|$)/)?.[1]
+    : undefined;
+}
+
+function normalizePort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
+}
+
+function isLoopbackHostname(hostname) {
+  return hostname === "127.0.0.1" || hostname === "localhost";
+}
+
+function parseAuthority(authority) {
+  if (typeof authority !== "string" || authority.trim().length === 0)
+    return undefined;
+  try {
+    return new URL(`http://${authority.trim()}`);
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveServerPort(server) {
+  const address = server.address();
+  return address && typeof address !== "string" ? address.port : undefined;
+}
+
+function validateHostHeader(request, server) {
+  const header = Array.isArray(request.headers.host)
+    ? request.headers.host[0]
+    : request.headers.host;
+  const parsed = parseAuthority(header);
+  const actualPort = resolveServerPort(server);
+  const port = normalizePort(parsed?.port);
+  if (
+    parsed == null ||
+    actualPort === undefined ||
+    port !== actualPort ||
+    !isLoopbackHostname(parsed.hostname)
+  ) {
+    throw new HttpError(403, "Host no permitido");
+  }
+}
+
+function validateOriginHeader(originHeader, allowedWebPorts) {
+  if (originHeader == null || originHeader === "") return undefined;
+  let parsed;
+  try {
+    parsed = new URL(originHeader);
+  } catch {
+    throw new HttpError(403, "Origin no permitido");
+  }
+  const port = normalizePort(parsed.port);
+  if (
+    parsed.protocol !== "http:" ||
+    port === undefined ||
+    !isLoopbackHostname(parsed.hostname)
+  ) {
+    throw new HttpError(403, "Origin no permitido");
+  }
+  if (
+    allowedWebPorts !== undefined &&
+    allowedWebPorts.length > 0 &&
+    !allowedWebPorts.includes(port)
+  ) {
+    throw new HttpError(403, "Origin no permitido");
+  }
+  return parsed.origin;
+}
+
+function corsHeaders(origin) {
+  if (origin === undefined) return {};
+  return {
+    "access-control-allow-origin": origin,
+    vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+  };
+}
+
+function isJsonContentType(header) {
+  const value = Array.isArray(header) ? header[0] : header;
+  return (
+    typeof value === "string" &&
+    value.split(";")[0].trim().toLowerCase() === "application/json"
+  );
 }
 
 export class Maia3Process {
@@ -181,8 +312,6 @@ export class Maia3Process {
       this.fail(error, true);
       throw error;
     });
-    // Health requests observe this rejection. The handler prevents an early
-    // process failure from becoming an unhandled rejection before that request.
     this.ready.catch(() => undefined);
   }
 
@@ -205,9 +334,7 @@ export class Maia3Process {
   write(line) {
     if (this.closed)
       throw this.failure ?? new Error("Maia-3 no está disponible");
-    if (!this.process.stdin.write(`${line}\n`)) {
-      // Backpressure is handled by Node's stream; no synchronous wait is needed.
-    }
+    this.process.stdin.write(`${line}\n`);
   }
 
   waitFor(predicate, timeoutMs, description) {
@@ -258,12 +385,10 @@ export class Maia3Process {
       this.warmupTimeoutMs,
       "la jugada de calentamiento",
     );
-    if (!INITIAL_POSITION_LEGAL_MOVES.has(move))
-      throw new Error(
-        `Maia-3 devolvió una jugada de calentamiento inválida: ${move}`,
-      );
+    if (!INITIAL_POSITION_LEGAL_MOVES.has(move)) {
+      throw new Error(`Maia-3 devolvió una jugada de calentamiento inválida: ${move}`);
+    }
 
-    // Do not carry warmup state into the first user game.
     this.write("ucinewgame");
     await this.waitUntilReady(this.warmupTimeoutMs);
   }
@@ -283,10 +408,11 @@ export class Maia3Process {
     const bestmove = this.waitFor(
       (line) => {
         const info = parseInfo(line);
-        if (info) candidates.push(info);
+        if (info && candidates.length < MAX_MAIA_CANDIDATES) candidates.push(info);
         if (typeof line === "string" && line.startsWith("bestmove ")) {
-          if (!bestMoveFromLine(line))
+          if (!bestMoveFromLine(line)) {
             return new Error(`Maia-3 devolvió bestmove inválido: ${line}`);
+          }
           return true;
         }
         return false;
@@ -296,10 +422,12 @@ export class Maia3Process {
     ).then((line) => bestMoveFromLine(line));
     this.write("go nodes 1");
     return bestmove.then((move) => {
-      if (!move || move === "0000")
+      if (!move || move === "0000") {
         throw new Error("La posición no tiene una jugada disponible");
-      if (!UCI_MOVE.test(move))
+      }
+      if (!UCI_MOVE.test(move)) {
         throw new Error(`Maia-3 devolvió bestmove inválido: ${move}`);
+      }
       return { move, candidates };
     });
   }
@@ -311,13 +439,8 @@ export class Maia3Process {
     this.write(`setoption name Temperature value ${request.temperature}`);
     this.write(`setoption name MultiPV value ${request.multiPv}`);
     this.write("ucinewgame");
-    // Maia applies options and resets its neural state asynchronously. UCI
-    // requires an isready barrier before starting the next search; without it
-    // the first game can remain stuck after the warmup search.
     await this.waitUntilReady(this.moveTimeoutMs);
-    const moveList = request.moves.length
-      ? ` moves ${request.moves.join(" ")}`
-      : "";
+    const moveList = request.moves.length ? ` moves ${request.moves.join(" ")}` : "";
     this.write(`position fen ${request.initialFen}${moveList}`);
     const { move, candidates } = await this.search(
       this.moveTimeoutMs,
@@ -343,7 +466,7 @@ function readJson(request) {
     request.on("data", (chunk) => {
       body += chunk;
       if (Buffer.byteLength(body) > MAX_BODY_BYTES) {
-        reject(new Error("Solicitud demasiado grande"));
+        reject(new HttpError(413, "Solicitud demasiado grande"));
         request.destroy();
       }
     });
@@ -358,25 +481,51 @@ function readJson(request) {
   });
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, headers = {}) {
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...headers,
   });
   response.end(JSON.stringify(value));
 }
 
+function sendEmpty(response, status, headers = {}) {
+  response.writeHead(status, {
+    "cache-control": "no-store",
+    ...headers,
+  });
+  response.end();
+}
+
+function parseAllowedWebPorts(value) {
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const ports = value
+    .split(",")
+    .map((entry) => normalizePort(entry.trim()))
+    .filter((entry) => entry !== undefined);
+  return ports.length > 0 ? ports : undefined;
+}
+
 export function startBridge({
+  allowedWebPorts = parseAllowedWebPorts(process.env.MAIA3_ALLOWED_WEB_PORTS),
   enginePath = ENGINE_PATH,
   port = PORT,
   host = HOST,
   processOptions,
+  queueLimit = DEFAULT_QUEUE_LIMIT,
+  retryAfterSeconds = DEFAULT_RETRY_AFTER_SECONDS,
 } = {}) {
   if (!enginePath) throw new Error("Falta MAIA3_ENGINE_PATH");
   const engine = new Maia3Process(enginePath, processOptions);
   let queue = Promise.resolve();
+  let scheduledMoves = 0;
+
   const server = createServer(async (request, response) => {
+    let responseHeaders = {};
     try {
+      validateHostHeader(request, server);
+
       if (request.method === "GET" && request.url === "/health") {
         await engine.ready;
         return sendJson(response, 200, {
@@ -384,33 +533,100 @@ export function startBridge({
           backend: "maia3-local",
         });
       }
-      if (request.method !== "POST" || request.url !== "/move")
+
+      if (request.url !== "/move") {
         return sendJson(response, 404, { error: "Ruta no encontrada" });
+      }
+
+      const originHeader = Array.isArray(request.headers.origin)
+        ? request.headers.origin[0]
+        : request.headers.origin;
+      const origin = validateOriginHeader(originHeader, allowedWebPorts);
+      responseHeaders = corsHeaders(origin);
+
+      if (request.method === "OPTIONS") {
+        if (
+          request.headers["access-control-request-method"] !== "POST" ||
+          !String(request.headers["access-control-request-headers"] ?? "")
+            .toLowerCase()
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .every((value) => value === "content-type")
+        ) {
+          throw new HttpError(405, "Preflight no permitido", responseHeaders);
+        }
+        return sendEmpty(response, 204, {
+          ...responseHeaders,
+          "access-control-allow-methods": "POST, OPTIONS",
+          "access-control-allow-headers": "content-type",
+        });
+      }
+
+      if (request.method !== "POST") {
+        return sendJson(response, 404, { error: "Ruta no encontrada" }, responseHeaders);
+      }
+
+      if (!isJsonContentType(request.headers["content-type"])) {
+        throw new HttpError(
+          415,
+          "Content-Type debe ser application/json",
+          responseHeaders,
+        );
+      }
+
+      if (scheduledMoves >= queueLimit + 1) {
+        throw new HttpError(429, "Cola de Maia-3 llena", {
+          ...responseHeaders,
+          "retry-after": String(retryAfterSeconds),
+        });
+      }
+
       const input = validateRequest(await readJson(request));
-      const task = queue.then(() => engine.chooseMove(input));
-      queue = task.catch(() => undefined);
-      sendJson(response, 200, await task);
-    } catch (error) {
-      sendJson(response, 400, {
-        error: error instanceof Error ? error.message : String(error),
+      scheduledMoves += 1;
+      const task = queue.then(async () => {
+        try {
+          return await engine.chooseMove(input);
+        } finally {
+          scheduledMoves -= 1;
+        }
       });
+      queue = task.catch(() => undefined);
+      sendJson(response, 200, await task, responseHeaders);
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 400;
+      const headers =
+        error instanceof HttpError ? error.headers : responseHeaders;
+      sendJson(
+        response,
+        status,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        headers,
+      );
     }
   });
+
   engine.ready
-    .then(() =>
-      process.stdout.write(`Maia-3 bridge ready at http://${host}:${port}\n`),
-    )
+    .then(() => {
+      const actualPort = resolveServerPort(server) ?? port;
+      process.stdout.write(`Maia-3 bridge ready at http://${host}:${actualPort}\n`);
+    })
     .catch((error) => {
       process.stderr.write(
         `[maia3] El calentamiento falló: ${error instanceof Error ? error.message : String(error)}\n`,
       );
       server.close();
     });
-  server.listen(port, host, () =>
+
+  server.listen(port, host, () => {
+    const actualPort = resolveServerPort(server) ?? port;
     process.stdout.write(
-      `Maia-3 bridge listening at http://${host}:${port}; warming up…\n`,
-    ),
-  );
+      `Maia-3 bridge listening at http://${host}:${actualPort}; warming up...\n`,
+    );
+  });
+
   const shutdown = () => {
     server.close();
     engine.close();

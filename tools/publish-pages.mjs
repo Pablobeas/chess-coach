@@ -2,21 +2,78 @@ import {
   copyFile,
   mkdir,
   readdir,
+  readFile,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+export const PAGES_CSP_DIRECTIVES = Object.freeze([
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-src 'none'",
+]);
+export const PAGES_META_CSP = PAGES_CSP_DIRECTIVES.join("; ");
+export const PAGES_CSP_META_TAG = `<meta http-equiv="Content-Security-Policy" content="${PAGES_META_CSP}" />`;
+export const PAGES_CSP_MARKER = "<!-- __CHESS_COACH_PAGES_CSP__ -->";
 export const FORBIDDEN_PUBLISH_PATH_PATTERNS = Object.freeze([
   /(^|\/)\.git(\/|$)/i,
+  /(^|\/)\.env(?:\.[^/]+)?$/i,
+  /(^|\/)\.runtime(\/|$)/i,
   /\.map$/i,
   /(^|\/)[^/]*checkpoint[^/]*(\/|$)/i,
+  /(^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|authorized_keys)(?:\.[^/]+)?$/i,
+  /(^|\/)[^/]*(?:credential|secret)[^/]*(\.[^/]+)?$/i,
+  /\.(?:pem|key|p12|pfx)$/i,
 ]);
+const ALLOWED_EXTENSIONLESS_ARTIFACTS = new Set(["_headers", ".nojekyll", "CNAME"]);
+const ALLOWED_PUBLISH_EXTENSIONS = new Set([
+  ".avif",
+  ".css",
+  ".gif",
+  ".html",
+  ".ico",
+  ".jpeg",
+  ".jpg",
+  ".js",
+  ".json",
+  ".mjs",
+  ".ogg",
+  ".png",
+  ".svg",
+  ".txt",
+  ".wasm",
+  ".wav",
+  ".webm",
+  ".webmanifest",
+  ".webp",
+  ".woff",
+  ".woff2",
+  ".xml",
+]);
+const REQUIRED_PUBLISH_HTML_FILES = Object.freeze(["index.html"]);
 
 function normalizePath(pathname) {
   return pathname.split(sep).join("/");
+}
+
+function isAllowedPublishArtifact(relativePath) {
+  const filename = basename(relativePath);
+  if (ALLOWED_EXTENSIONLESS_ARTIFACTS.has(filename)) {
+    return true;
+  }
+  return ALLOWED_PUBLISH_EXTENSIONS.has(extname(filename).toLowerCase());
 }
 
 async function assertDirectory(pathname, label) {
@@ -56,10 +113,52 @@ function ensureRelativePathAllowed(relativePath) {
       throw new Error(`Forbidden publish artifact: ${relativePath}`);
     }
   }
+  if (!isAllowedPublishArtifact(relativePath)) {
+    throw new Error(`Unexpected publish artifact type: ${relativePath}`);
+  }
+}
+
+async function preparePublishHtmlArtifact(sourceRoot, relativePath) {
+  const absolutePath = join(sourceRoot, relativePath);
+  const html = await readFile(absolutePath, "utf8");
+  const hasMarker = html.includes(PAGES_CSP_MARKER);
+  const hasMeta = html.includes(PAGES_CSP_META_TAG);
+
+  if (!hasMarker && !hasMeta) {
+    throw new Error(
+      `Publish artifact ${relativePath} must include ${PAGES_CSP_MARKER} or ${PAGES_CSP_META_TAG}`,
+    );
+  }
+
+  if (hasMarker) {
+    const nextHtml = html.replace(PAGES_CSP_MARKER, PAGES_CSP_META_TAG);
+    if (nextHtml !== html) {
+      await writeFile(absolutePath, nextHtml);
+    }
+  }
+}
+
+async function preparePublishTree(sourceRoot) {
+  for (const relativePath of REQUIRED_PUBLISH_HTML_FILES) {
+    await preparePublishHtmlArtifact(sourceRoot, relativePath);
+  }
+
+  const spaFallbackPath = join(sourceRoot, "404.html");
+  try {
+    const details = await stat(spaFallbackPath);
+    if (details.isFile()) {
+      await preparePublishHtmlArtifact(sourceRoot, "404.html");
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !/ENOENT/i.test(error.message)) {
+      throw error;
+    }
+  }
 }
 
 export async function validatePublishTree(sourceRoot) {
   await assertDirectory(sourceRoot, "Publish source");
+  await preparePublishTree(sourceRoot);
   const files = (
     await Promise.all(
       (await listFiles(sourceRoot)).map(async (file) => {

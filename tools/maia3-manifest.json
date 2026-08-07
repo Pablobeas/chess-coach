@@ -1,0 +1,29 @@
+{
+  "python": {
+    "min": "3.10",
+    "maxExclusive": "3.13"
+  },
+  "source": {
+    "url": "https://github.com/CSSLab/maia3.git",
+    "package": "maia3",
+    "commit": "1e13597c42d4858b7cfd7cfdae01e297263364b2",
+    "entrypoint": "Scripts\\maia3-5m.exe",
+    "directDependencies": {
+      "huggingface-hub": ">=0.23",
+      "numpy": "*",
+      "python-chess": "*",
+      "torch": "*"
+    }
+  },
+  "checkpoint": {
+    "repository": "https://huggingface.co/UofTCSSLab/Maia3-5M",
+    "revision": "b6559de2398d7140b985f28fd2c19fb5e47ddabe",
+    "filename": "maia3-5m.pt",
+    "sizeBytes": 20968049,
+    "sha256": "BA14208B2992D85502F5FB501934ABF6AAAEB355E9F3FDF90E326911F562524F"
+  },
+  "reproducibility": {
+    "portableTransitiveLock": false,
+    "reason": "Upstream installs from a fixed VCS commit but leaves runtime dependency versions open, and the resolved wheel hashes vary across Python 3.10-3.12 and Windows environments. setup-maia3.ps1 records a local install report and resolved package snapshot before trusting the environment."
+  }
+}

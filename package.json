@@ -3,6 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "author": {
+    "name": "Pablo Beas",
+    "email": "pbeasboc@gmail.com",
+    "url": "https://www.linkedin.com/in/pablo-beas-bocanegra-05882a200/"
+  },
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Pablobeas/chess-coach",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pablobeas/chess-coach.git"
+  },
   "packageManager": "pnpm@11.9.0",
   "engines": {
     "node": ">=22 <25"
@@ -26,6 +37,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "chess.js": "1.4.0",
     "prettier": "3.9.5",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

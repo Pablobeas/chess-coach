@@ -392,20 +392,13 @@ function openBrowser(url) {
 async function startBridge(
   paths,
   bridgePort,
-  { registerChild = (child) => child } = {},
+  { allowedWebPort, registerChild = (child) => child } = {},
 ) {
   const tail = createTailBuffer();
   const child = registerChild(
     spawn(process.execPath, [paths.bridgeScript], {
       cwd: paths.projectRoot,
-      env: {
-        ...process.env,
-        MAIA3_ENGINE_PATH: paths.maiaEngine,
-        MAIA3_BRIDGE_HOST: HOST,
-        MAIA3_BRIDGE_PORT: String(bridgePort),
-        HF_HOME: join(paths.runtimeRoot, "huggingface"),
-        MAIA3_ENGINE_MODE: "python-entrypoint",
-      },
+      env: createBridgeSpawnEnv(paths, bridgePort, allowedWebPort),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     }),
@@ -430,6 +423,23 @@ async function startBridge(
     child,
     healthUrl,
     readyMs: Date.now() - startedAt,
+  };
+}
+
+export function createBridgeSpawnEnv(
+  paths,
+  bridgePort,
+  allowedWebPort,
+  baseEnv = process.env,
+) {
+  return {
+    ...baseEnv,
+    MAIA3_ENGINE_PATH: paths.maiaEngine,
+    MAIA3_BRIDGE_HOST: HOST,
+    MAIA3_BRIDGE_PORT: String(bridgePort),
+    MAIA3_ALLOWED_WEB_PORTS: String(allowedWebPort),
+    HF_HOME: join(paths.runtimeRoot, "huggingface"),
+    MAIA3_ENGINE_MODE: "python-entrypoint",
   };
 }
 
@@ -534,6 +544,10 @@ export async function runDevSession(options = {}, deps = {}) {
       signalExit,
     );
 
+    webPort = await raceWithSignal(
+      (deps.selectWebPort ?? selectWebPort)(DEFAULT_WEB_PORTS),
+      signalExit,
+    );
     bridgePort = await raceWithSignal(
       (deps.selectBridgePort ?? selectWebPort)(DEFAULT_BRIDGE_PORTS),
       signalExit,
@@ -541,16 +555,13 @@ export async function runDevSession(options = {}, deps = {}) {
     logMessage(`Levantando Maia-3 en ${HOST}:${bridgePort}.`);
     const bridge = await raceWithSignal(
       (deps.startBridge ?? startBridge)(paths, bridgePort, {
+        allowedWebPort: webPort,
         registerChild: (child) => childCleanup.track(child),
       }),
       signalExit,
     );
     logMessage(`Maia-3 listo en ${bridge.readyMs} ms.`);
 
-    webPort = await raceWithSignal(
-      (deps.selectWebPort ?? selectWebPort)(DEFAULT_WEB_PORTS),
-      signalExit,
-    );
     logMessage(`Levantando Vite en ${HOST}:${webPort}.`);
     const vite = await raceWithSignal(
       (deps.startVite ?? startVite)(paths, bridgePort, webPort, {

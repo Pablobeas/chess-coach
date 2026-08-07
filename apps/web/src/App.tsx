@@ -127,6 +127,21 @@ export const GAME_MAIN_CONTENT_ID = "main-content";
 type EngineState = "idle" | "thinking" | "ready" | "error";
 const COACH_SLOW_THRESHOLD_MS = 4_000;
 export const COACH_DEADLINE_MS = 18_000;
+/**
+ * Bounds untrusted local PGN input before File.text() allocates its complete
+ * contents on the UI thread. A typical full game is only a few kilobytes.
+ */
+export const MAX_PGN_IMPORT_BYTES = 256 * 1024;
+/**
+ * Keeps a valid but unusually long PGN from creating an impractical session
+ * history after it has been parsed.
+ */
+export const MAX_PGN_IMPORT_PLIES = 1_024;
+const PGN_FILE_TOO_LARGE_MESSAGE =
+  "El archivo PGN supera el límite de 256 KB y no se puede importar.";
+const PGN_TOO_MANY_MOVES_MESSAGE =
+  "El PGN supera el límite de 1.024 medias jugadas y no se puede importar.";
+const INVALID_PGN_MESSAGE = "El archivo no contiene un PGN válido o legal.";
 export type CoachFailureStage =
   "before" | "after" | "analyzeTurn" | "acceptance";
 export type CoachFailureAction =
@@ -146,6 +161,26 @@ export function coachDebugEnabled(search?: string): boolean {
   const resolvedSearch =
     search ?? (typeof window === "undefined" ? "" : window.location.search);
   return new URLSearchParams(resolvedSearch).get("coachDebug") === "1";
+}
+
+class PgnImportError extends Error {}
+
+export async function loadPgnImportFile(
+  file: Pick<File, "size" | "text">,
+): Promise<GameSession> {
+  if (file.size > MAX_PGN_IMPORT_BYTES) {
+    throw new PgnImportError(PGN_FILE_TOO_LARGE_MESSAGE);
+  }
+
+  const imported = loadPgn(await file.text());
+  if (imported.history.length > MAX_PGN_IMPORT_PLIES) {
+    throw new PgnImportError(PGN_TOO_MANY_MOVES_MESSAGE);
+  }
+  return imported;
+}
+
+export function pgnImportErrorMessage(error: unknown): string {
+  return error instanceof PgnImportError ? error.message : INVALID_PGN_MESSAGE;
 }
 
 function normalizedCoachErrorName(error: unknown): string {
@@ -2636,7 +2671,7 @@ export function App({ initialFen }: AppProps) {
 
   const importPgnFile = async (file: File) => {
     try {
-      const imported = loadPgn(await file.text());
+      const imported = await loadPgnImportFile(file);
       cancelCoachPrewarms();
       cancelPendingCoachAttempt();
       setRetryTarget(undefined);
@@ -2655,8 +2690,8 @@ export function App({ initialFen }: AppProps) {
       setEngineState("idle");
       setMoveAnimation(undefined);
       setEngineMessage("PGN importado. La partida puede continuar.");
-    } catch {
-      setSessionError("El archivo no contiene un PGN válido o legal.");
+    } catch (error) {
+      setSessionError(pgnImportErrorMessage(error));
     }
   };
 

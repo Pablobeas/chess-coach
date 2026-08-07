@@ -337,3 +337,42 @@ una jugada automática.
 `openingPeriodForSession` comparte la misma política de apertura con la revisión
 postpartida. Esto evita duplicar reglas de fase y mantiene coherencia entre
 entrenamiento activo y análisis posterior.
+
+## ADR-021 --- Publicacion GPL y source correspondiente
+
+**Estado:** aceptada.
+
+La distribucion publica del proyecto se mantiene bajo `GPL-3.0-or-later`. Cada
+release y espejo estatico debe enlazar la licencia raiz, los avisos de terceros y
+la fuente correspondiente de Stockfish redistribuido. El repositorio publico solo
+publica artefactos derivados del commit exacto de origen; no hay edicion manual del
+producto publicado ni excepciones a la trazabilidad por hash.
+
+## ADR-022 --- CSP por meta para GitHub Pages
+
+**Estado:** aceptada.
+
+La publicacion en GitHub Pages no puede depender de cabeceras HTTP propias, asi que
+la CSP del sitio estatica se entrega mediante meta tag y se limita a los recursos
+locales necesarios para la PWA. Esto mantiene la ruta publica compatible con Pages
+sin introducir un servidor intermedio ni relajar la politica de origen.
+
+## ADR-023 --- Maia-3 local con riesgo aceptado de dependencias transitivas
+
+**Estado:** aceptada con restriccion de distribucion.
+
+Maia-3 se usa solo como companion local sobre `127.0.0.1`. El instalador fija el
+commit de origen, verifica el checkpoint y guarda evidencia local del despliegue,
+pero acepta que las dependencias transitivas de Python sigan resolviendose desde
+upstream durante la instalacion inicial. Ese riesgo queda registrado en los reportes
+locales y no implica redistribucion del entorno ni de los pesos.
+
+## ADR-024 --- Snapshot de Stockfish y verificacion del source correspondiente
+
+**Estado:** aceptada.
+
+El Stockfish redistribuido se produce a partir de un snapshot local fijado por
+`gitHead` y hashes de artefactos. Antes de publicar binarios o WASM se verifica el
+source snapshot, el manifiesto de hashes y el archivo de licencia correspondiente.
+Si el snapshot cambia, la fuente documentada y los hashes publicados deben
+actualizarse en la misma revision.

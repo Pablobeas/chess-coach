@@ -585,6 +585,25 @@ describe("UCI worker engine", () => {
     expect(worker.messages).toContain("setoption name MultiPV value 1");
   });
 
+  it("rejects opponent requests whose initial FEN and moves do not reproduce the current FEN", async () => {
+    const worker = new FakeUciWorker();
+    const broker = createUciWorkerBroker(worker);
+
+    await expect(
+      broker.chooseMove({
+        ...defaultOpponentRequest,
+        id: "opponent-invalid-history",
+        fen: initialPosition,
+        initialFen: initialPosition,
+        moves: ["e2e4"],
+      }),
+    ).rejects.toThrow("does not reproduce");
+
+    expect(worker.messages.filter((message) => message.startsWith("go "))).toEqual(
+      [],
+    );
+  });
+
   it("cancels an opponent search, drains stop/isready, and starts the next analysis cleanly", async () => {
     const worker = new ControlledUciWorker();
     const broker = createUciWorkerBroker(worker);
@@ -1068,6 +1087,30 @@ describe("UCI worker engine", () => {
         { rank: 1, moves: ["e7e5", "g1f3"] },
         { rank: 2, moves: ["d7d5", "g1f3"] },
       ],
+    });
+  });
+
+  it("ignores oversized UCI info lines before accepting a later valid update", async () => {
+    const oversizedPv = `info depth 10 nodes 100 multipv 1 score cp 10 pv ${"e2e4 ".repeat(400)}`;
+    const worker = new FakeUciWorker({
+      info: [
+        oversizedPv,
+        "info depth 10 nodes 101 multipv 1 score cp 12 pv e7e5 g1f3",
+      ],
+      bestmove: "e7e5",
+    });
+    const engine = createUciWorkerEngine(worker);
+
+    await expect(
+      engine.analyze({
+        id: "uci-oversized-info-line",
+        fen: openingAfterE4,
+        perspective: "black",
+        multiPv: 1,
+        limit: { kind: "time", milliseconds: 10 },
+      }),
+    ).resolves.toMatchObject({
+      lines: [{ rank: 1, moves: ["e7e5", "g1f3"] }],
     });
   });
 

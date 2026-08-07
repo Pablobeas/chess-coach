@@ -1,121 +1,68 @@
 # Alfil Norte
 
-<p align="left">
-  <strong>Entrena ajedrez con un rival local y un entrenador determinista que explica cada decisión.</strong>
-</p>
+Entrenador de ajedrez offline-first para jugar, analizar y recibir feedback determinista sin depender de un LLM. El producto combina un rival local de estilo humano para escritorio, analisis local con Stockfish y una PWA instalable para practica diaria.
 
-<p align="left">
-  <img alt="Estado MVP" src="https://img.shields.io/badge/Estado-MVP-2f6f4f?style=flat-square" />
-  <img alt="Offline-first" src="https://img.shields.io/badge/Modo-Offline--first-1f6feb?style=flat-square" />
-  <img alt="PWA" src="https://img.shields.io/badge/Formato-PWA-0f766e?style=flat-square" />
-  <img alt="Motor local" src="https://img.shields.io/badge/Motor-Stockfish%20%2B%20Maia--3-8b5cf6?style=flat-square" />
-  <img alt="Node" src="https://img.shields.io/badge/Node-%3E%3D22%20%3C25-333333?style=flat-square" />
-  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-11.x-f59e0b?style=flat-square" />
-</p>
-
-Alfil Norte es una web/PWA de entrenamiento de ajedrez pensada para jugar partidas completas y entender por qué una jugada funciona o falla. El MVP combina:
-
-- un oponente local basado en Maia-3 5M;
-- análisis pedagógico local con Stockfish;
-- feedback determinista con detectores de motivos y plantillas;
-- puzles y repertorios de aperturas;
-- persistencia local y experiencia instalable como PWA.
+[Demo estatica en GitHub Pages](https://pablobeas.github.io/chess-coach-play/) |
+[Arquitectura](docs/ARCHITECTURE.md) |
+[Calidad](docs/QUALITY.md) |
+[Seguridad](SECURITY.md) |
+[Contribucion](CONTRIBUTING.md) |
+[Terceros y source](docs/THIRD_PARTY.md) |
+[Stockfish source](docs/STOCKFISH_SOURCE.md)
 
 ## Capturas
 
 <table>
   <tr>
     <td align="center">
-      <img src="docs/screenshots/home.png" alt="Pantalla principal de Alfil Norte con acceso a partida, puzles y aperturas" width="100%" />
+      <img src="docs/screenshots/home.png" alt="Pantalla principal de Alfil Norte" width="100%" />
       <br />
       <sub>Inicio</sub>
     </td>
     <td align="center">
-      <img src="docs/screenshots/puzzles.png" alt="Modo puzles con ejercicios locales de entrenamiento" width="100%" />
+      <img src="docs/screenshots/puzzles.png" alt="Modo puzles de Alfil Norte" width="100%" />
       <br />
       <sub>Puzles</sub>
     </td>
     <td align="center">
-      <img src="docs/screenshots/openings.png" alt="Entrenamiento de aperturas con líneas y práctica local" width="100%" />
+      <img src="docs/screenshots/openings.png" alt="Modo aperturas de Alfil Norte" width="100%" />
       <br />
       <sub>Aperturas</sub>
     </td>
   </tr>
 </table>
 
-## Qué hace
+## Que hace hoy
 
-- Jugar contra un rival local con estilo humano en el modo de escritorio y desarrollo local.
-- Analizar cada jugada con evidencia del motor, sin depender de un LLM.
-- Mostrar explicaciones breves, deterministas y verificables.
-- Dar pistas progresivas: objetivo, pieza o zona, y solo al final el movimiento.
-- Guardar partida, historial y PGN en local.
-- Funcionar como PWA instalable con una interfaz móvil cuidada.
-- Mantener la privacidad por defecto: la partida no necesita salir del dispositivo para jugar ni para recibir feedback.
+- Juega partidas completas en local.
+- Explica cada decision del usuario con evidencia del motor y reglas deterministas.
+- Funciona como PWA instalable y mantiene la partida en el dispositivo.
+- Exporta e importa PGN con limites defensivos.
+- Ofrece puzles y practica de aperturas sin depender de servicios remotos.
 
-## Inicio rápido
+## Inicio rapido
 
 Requisitos:
 
 - Node.js `>=22 <25`
 - pnpm `11.x`
-- Python `3.10–3.12`
+- Python `3.10-3.12`
 - Git
 
-Instalación y arranque:
+Instalacion y arranque:
 
 ```powershell
 pnpm install
 pnpm dev
 ```
 
-Si prefieres abrir el navegador automáticamente en Windows, usa:
+Atajo en Windows:
 
 ```powershell
 .\play.ps1
 ```
 
-Notas importantes:
-
-- `pnpm dev` levanta la app y el companion local que habilita Maia-3.
-- La primera ejecución puede descargar e instalar dependencias locales de Maia-3, preparar `.runtime/maia3` y bajar el checkpoint necesario para jugar.
-- Ese arranque inicial usa `setup-maia3.ps1` y puede requerir red; después, el juego y el análisis siguen funcionando localmente.
-- El lanzador elige puertos locales libres y muestra la URL activa en consola.
-
-## Maia-3 y Stockfish
-
-El proyecto usa dos piezas distintas:
-
-- **Maia-3 5M**: oponente local con estilo más humano, pensado para practicar partidas.
-- **Stockfish local**: fuente de análisis pedagógico y respaldo cuando el companion de Maia-3 no está disponible.
-
-En la práctica:
-
-- Maia-3 decide las jugadas del rival cuando el companion local está listo.
-- Stockfish aporta la evidencia técnica que usa el entrenador.
-- Si Maia-3 no puede arrancar, la aplicación conserva un camino local con Stockfish como fallback.
-
-## Arquitectura del monorepo
-
-La estructura principal es:
-
-- `apps/web`: interfaz React/Vite, PWA y composición visual.
-- `packages/chess-core`: reglas, FEN, PGN y tipos de dominio.
-- `packages/engine`: contrato UCI y ejecución del motor en Worker.
-- `packages/coach`: evaluación pedagógica, pistas y mensajes estructurados.
-- `tests/evals`: posiciones y partidas de referencia para validar el entrenador.
-- `docs`: alcance, arquitectura, modelo pedagógico, calidad, roadmap y terceros.
-
-Dependencias unidireccionales:
-
-- `web -> coach -> engine`
-- `web -> chess-core`
-- `coach -> chess-core`
-- `engine -> chess-core`
-
-## Calidad y verificación
-
-Comandos principales:
+Comprobaciones principales:
 
 ```powershell
 pnpm typecheck
@@ -125,46 +72,68 @@ pnpm check
 pnpm format:check
 ```
 
-Comandos adicionales útiles:
+## Demo publica frente a modo local
 
-```powershell
-pnpm test:e2e
-pnpm verify:training-content
-pnpm build:pages
-pnpm build:sites
-```
+La demo estatica publicada en GitHub Pages sirve para validar la experiencia PWA y el flujo offline del navegador. No intenta exponer Maia-3 en remoto.
 
-## Estado del proyecto
+| Entorno | Rival | Analisis | Red necesaria |
+| --- | --- | --- | --- |
+| GitHub Pages | Stockfish local en navegador | Stockfish local en navegador | Solo para cargar la app y assets la primera vez |
+| `pnpm dev` / `play.ps1` | Maia-3 local por loopback, con fallback local | Stockfish local | La primera preparacion de Maia puede requerir red |
 
-Alfil Norte sigue en estado MVP. El foco actual es la experiencia de entrenamiento local, no un producto terminado para despliegue masivo.
+La limitacion es intencionada: Maia-3 se ejecuta como companion local sobre `127.0.0.1` y no se publica como backend remoto del producto.
 
-Alcance ya cubierto a nivel de producto:
+## Maia-3 y Stockfish
 
-- tablero React/Vite interactivo y persistente;
-- Stockfish WASM local como base de análisis;
-- Maia-3 5M local como oponente mediante companion UCI separado;
-- tests de dominio, motor, persistencia e interacción.
+El proyecto separa dos responsabilidades:
 
-Fuera del MVP:
+- **Stockfish local** es la fuente de verdad para evaluacion y feedback.
+- **Maia-3 5M local** actua como rival de estilo humano en escritorio/desarrollo local.
 
-- multijugador en línea;
-- rankings o antitrampas;
-- sincronización obligatoria en la nube;
-- LLM remoto o local para generar feedback;
-- dependencias de red para jugar o analizar.
+En el primer arranque con Maia, `tools/setup-maia3.ps1`:
 
-## Fuente de verdad
+1. crea `.runtime/maia3`;
+2. instala Maia desde un commit fijado;
+3. verifica el hash del checkpoint oficial;
+4. guarda evidencia local en `install-report.json` y `resolved-packages.json`.
 
-La documentación de referencia vive en:
+Limitacion honesta: el commit de Maia y el hash del checkpoint estan fijados, pero sus dependencias transitivas de Python siguen resolviendose desde upstream durante la instalacion inicial. El repo registra esa resolucion localmente para auditoria, pero no redistribuye un entorno vendorizado ni afirma un lockfile cerrado para todo el arbol transitivo.
 
-- [docs/PRODUCT.md](docs/PRODUCT.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/COACHING_MODEL.md](docs/COACHING_MODEL.md)
-- [docs/QUALITY.md](docs/QUALITY.md)
-- [docs/ROADMAP.md](docs/ROADMAP.md)
-- [docs/DECISIONS.md](docs/DECISIONS.md)
-- [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md)
+## Arquitectura del monorepo
 
-## Licencia
+- `apps/web`: React/Vite, PWA y experiencia de usuario.
+- `packages/chess-core`: reglas, FEN, PGN y tipos de dominio.
+- `packages/engine`: contrato UCI y ejecucion del motor en Worker.
+- `packages/coach`: evaluacion pedagogica, pistas y mensajes estructurados.
+- `tests/evals`: posiciones y partidas de referencia.
+- `docs`: producto, arquitectura, calidad, decisiones, seguridad y terceros.
 
-El repositorio no declara todavía un archivo `LICENSE`. Si se añade una licencia formal, conviene reflejarla aquí y en la documentación de terceros.
+Dependencias permitidas:
+
+- `web -> coach -> engine`
+- `web -> chess-core`
+- `coach -> chess-core`
+- `engine -> chess-core`
+
+## Seguridad, licencia y codigo fuente
+
+- Licencia del proyecto: [GPL-3.0-or-later](LICENSE).
+- Avisos de terceros y procedencia de artefactos: [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+- Fuente correspondiente y hashes de Stockfish redistribuido: [docs/STOCKFISH_SOURCE.md](docs/STOCKFISH_SOURCE.md).
+- Politica de reporte: [SECURITY.md](SECURITY.md).
+- Guía de contribucion: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Revision puntual del endurecimiento actual: [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
+- Threat model: [docs/proyecto-ajedrez-threat-model.md](docs/proyecto-ajedrez-threat-model.md).
+
+El MVP no usa modelos de lenguaje para legalidad, evaluacion, tactica ni feedback. La ruta critica es local y determinista; no se envian partidas ni datos personales sin consentimiento.
+
+## Contribucion
+
+La guia de contribucion vive en [CONTRIBUTING.md](CONTRIBUTING.md). Si no tienes escritura directa sobre `main`, trabaja en un fork y abre un pull request; si la tienes, usa ramas pequenas y evita escribir directamente en `main`. El codigo tecnico usa ingles; los textos visibles y la documentacion de producto se mantienen en espanol por defecto.
+
+## Autor y contacto
+
+- Autor: [Pablo Beas](mailto:pbeasboc@gmail.com)
+- Email: [pbeasboc@gmail.com](mailto:pbeasboc@gmail.com)
+- LinkedIn: [https://www.linkedin.com/in/pablo-beas-bocanegra-05882a200/](https://www.linkedin.com/in/pablo-beas-bocanegra-05882a200/)
+- GitHub: `@Pablobeas`

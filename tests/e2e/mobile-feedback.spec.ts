@@ -251,26 +251,25 @@ test.describe("mobile fixed game and coach feedback", () => {
     await expect(treeTrigger).toBeFocused();
 
     const evaluation = page.locator(".mobile-evaluation");
-    const moreTrigger = page.locator(".mobile-more-toggle");
+    const utilityMenu = page.locator(".utility-menu");
+    const moreTrigger = page.getByLabel("Abrir más acciones de partida");
     await moreTrigger.focus();
     await page.keyboard.press("Enter");
-    const moreDialog = page.getByRole("dialog", { name: "Más acciones" });
-    await expect(moreDialog).toBeVisible();
-    await expect(
-      moreDialog.getByRole("button", { name: "Cerrar" }),
-    ).toBeFocused();
-    await expect(moreDialog.getByLabel("Capturas actuales")).toBeVisible();
-    await expect(moreDialog).toContainText("Exportar PGN");
-    await expect(moreDialog).toContainText("Reiniciar partida");
-    await expect(moreDialog).toContainText("Abandonar partida");
-    await expect(moreDialog).toContainText("Ajustes visibles");
-    const evaluationToggle = moreDialog.getByLabel("Mostrar evaluación");
+    await expect(utilityMenu).toHaveAttribute("open", "");
+    const utilityPanel = utilityMenu.locator(".utility-menu-panel");
+    await expect(utilityPanel).toBeVisible();
+    await expect(utilityPanel.getByLabel("Piezas capturadas")).toBeVisible();
+    await expect(utilityPanel).toContainText("Exportar PGN");
+    await expect(utilityPanel).toContainText("Reiniciar partida");
+    await expect(utilityPanel).toContainText("Abandonar partida");
+    await expect(utilityPanel).toContainText("Ajustes visibles");
+    const evaluationToggle = utilityPanel.getByLabel("Mostrar evaluación");
     if (await evaluationToggle.isChecked()) await evaluationToggle.uncheck();
     await expect(evaluation).toHaveCount(0);
     await evaluationToggle.check();
     await expect(evaluation).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(moreDialog).toHaveCount(0);
+    await expect(utilityMenu).not.toHaveAttribute("open", "");
     await expect(moreTrigger).toBeFocused();
 
     const back = page.getByRole("button", { name: /Retroceder una jugada/ });
@@ -341,7 +340,7 @@ test.describe("mobile fixed game and coach feedback", () => {
         ".mobile-tree-toggle",
         ".history-controls",
         ".pause-button",
-        ".mobile-more-toggle",
+        ".utility-menu > summary",
       ];
       return {
         viewportHeight,
@@ -461,7 +460,7 @@ test.describe("mobile fixed game and coach feedback", () => {
         ".mobile-tree-toggle",
         ".history-controls",
         ".pause-button",
-        ".mobile-more-toggle",
+        ".utility-menu > summary",
       ].map((selector) => {
         const element = document.querySelector<HTMLElement>(selector);
         const rect = element?.getBoundingClientRect();
@@ -509,7 +508,7 @@ test.describe("mobile fixed game and coach feedback", () => {
       ".mobile-tree-toggle",
       ".history-controls",
       ".pause-button",
-      ".mobile-more-toggle",
+      ".utility-menu > summary",
     ];
     const before = await page.evaluate(() => ({
       viewportHeight: window.visualViewport?.height ?? window.innerHeight,

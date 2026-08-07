@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  PAGES_CSP_META_TAG,
   syncPublishTree,
   validatePublishTree,
 } from "./publish-pages.mjs";
@@ -47,7 +48,11 @@ async function listRelativeFiles(root, base = root) {
 
 test("validatePublishTree rejects source maps and checkpoint artifacts", async () => {
   await withTempDir(async (projectRoot) => {
-    await writeProjectFile(projectRoot, "dist-pages/index.html", "<!doctype html>");
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
     await writeProjectFile(projectRoot, "dist-pages/assets/app.js.map", "{}");
 
     await assert.rejects(
@@ -57,7 +62,11 @@ test("validatePublishTree rejects source maps and checkpoint artifacts", async (
   });
 
   await withTempDir(async (projectRoot) => {
-    await writeProjectFile(projectRoot, "dist-pages/index.html", "<!doctype html>");
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
     await writeProjectFile(projectRoot, "dist-pages/models/checkpoint.bin", "x");
 
     await assert.rejects(
@@ -67,12 +76,97 @@ test("validatePublishTree rejects source maps and checkpoint artifacts", async (
   });
 });
 
+test("validatePublishTree injects a Pages CSP meta tag into index and 404 artifacts", async () => {
+  await withTempDir(async (projectRoot) => {
+    const html = [
+      "<!doctype html>",
+      "<html>",
+      "  <head>",
+      "    <meta charset=\"UTF-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+      "    <!-- __CHESS_COACH_PAGES_CSP__ -->",
+      "    <meta name=\"chess-coach-build-id\" content=\"__CHESS_COACH_BUILD_ID__\" />",
+      "  </head>",
+      "</html>",
+      "",
+    ].join("\n");
+    await writeProjectFile(projectRoot, "dist-pages/index.html", html);
+    await writeProjectFile(projectRoot, "dist-pages/404.html", html);
+    await writeProjectFile(projectRoot, "dist-pages/assets/app.js", "console.log('ok');\n");
+
+    const files = await validatePublishTree(join(projectRoot, "dist-pages"));
+    assert.deepEqual(
+      files.map((file) => file.relativePath),
+      ["404.html", "assets/app.js", "index.html"],
+    );
+
+    const indexHtml = await readFile(join(projectRoot, "dist-pages/index.html"), "utf8");
+    const notFoundHtml = await readFile(join(projectRoot, "dist-pages/404.html"), "utf8");
+    for (const output of [indexHtml, notFoundHtml]) {
+      assert.match(output, new RegExp(PAGES_CSP_META_TAG.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.doesNotMatch(output, /__CHESS_COACH_PAGES_CSP__/);
+      assert.doesNotMatch(output, /frame-ancestors/i);
+      assert.ok(
+        output.indexOf(PAGES_CSP_META_TAG) < output.indexOf("chess-coach-build-id"),
+      );
+    }
+  });
+});
+
+test("validatePublishTree rejects hidden runtime artifacts and unsupported file types", async () => {
+  await withTempDir(async (projectRoot) => {
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(projectRoot, "dist-pages/.env.production", "SECRET=1\n");
+
+    await assert.rejects(
+      () => validatePublishTree(join(projectRoot, "dist-pages")),
+      /Forbidden publish artifact: \.env\.production/,
+    );
+  });
+
+  await withTempDir(async (projectRoot) => {
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(projectRoot, "dist-pages/secrets.pem", "pem\n");
+
+    await assert.rejects(
+      () => validatePublishTree(join(projectRoot, "dist-pages")),
+      /Forbidden publish artifact: secrets\.pem/,
+    );
+  });
+
+  await withTempDir(async (projectRoot) => {
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(projectRoot, "dist-pages/cache/data.bin", "x");
+
+    await assert.rejects(
+      () => validatePublishTree(join(projectRoot, "dist-pages")),
+      /Unexpected publish artifact type: cache\/data\.bin/,
+    );
+  });
+});
+
 test("syncPublishTree replaces the target worktree contents and preserves .git", async () => {
   await withTempDir(async (projectRoot) => {
     const sourceRoot = join(projectRoot, "source");
     const targetRoot = join(projectRoot, "target");
 
-    await writeProjectFile(sourceRoot, "index.html", "<!doctype html>\n");
+    await writeProjectFile(
+      sourceRoot,
+      "index.html",
+      "<!doctype html>\n<html>\n  <head>\n    <!-- __CHESS_COACH_PAGES_CSP__ -->\n  </head>\n</html>\n",
+    );
     await writeProjectFile(sourceRoot, "assets/app.js", "console.log('ok');\n");
     await writeProjectFile(targetRoot, ".git/HEAD", "ref: refs/heads/main\n");
     await writeProjectFile(targetRoot, "old.txt", "stale\n");
@@ -90,6 +184,10 @@ test("syncPublishTree replaces the target worktree contents and preserves .git",
       await readFile(join(targetRoot, "assets/app.js"), "utf8"),
       "console.log('ok');\n",
     );
+    assert.match(
+      await readFile(join(targetRoot, "index.html"), "utf8"),
+      new RegExp(PAGES_CSP_META_TAG.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
   });
 });
 
@@ -98,7 +196,11 @@ test("syncPublishTree rejects nested source and target directories before mutati
     const targetRoot = join(projectRoot, "public-repo");
     const sourceInsideTarget = join(targetRoot, "dist-pages");
 
-    await writeProjectFile(sourceInsideTarget, "index.html", "<!doctype html>\n");
+    await writeProjectFile(
+      sourceInsideTarget,
+      "index.html",
+      "<!doctype html>\n<html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>\n",
+    );
     await writeProjectFile(targetRoot, ".git/HEAD", "ref: refs/heads/main\n");
     await writeProjectFile(targetRoot, "keep.txt", "keep\n");
 
@@ -113,7 +215,11 @@ test("syncPublishTree rejects nested source and target directories before mutati
     const sourceRoot = projectRoot;
     const targetInsideSource = join(projectRoot, "public-repo");
 
-    await writeProjectFile(sourceRoot, "dist-pages/index.html", "<!doctype html>\n");
+    await writeProjectFile(
+      sourceRoot,
+      "dist-pages/index.html",
+      "<!doctype html>\n<html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>\n",
+    );
     await writeProjectFile(targetInsideSource, ".git/HEAD", "ref: refs/heads/main\n");
     await writeProjectFile(targetInsideSource, "keep.txt", "keep\n");
 

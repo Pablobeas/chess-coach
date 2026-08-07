@@ -58,6 +58,19 @@ Vite y cierra ambos procesos juntos. Un fallo posterior conserva la FEN y el his
 el usuario puede reintentar con un identificador nuevo, mientras la UI descarta
 cualquier respuesta perteneciente a la solicitud anterior.
 
+## Gates de integracion
+
+- Bridge local: la web y el companion solo se comunican por loopback; ninguna ruta
+  central depende de un backend remoto.
+- Cola compartida: `missing-only` y `cancel-resume` se aplican de forma secuencial
+  para no mezclar resultados ni reusar respuestas stale.
+- UCI/PGN: toda salida UCI se valida antes de convertirse en evidencia, feedback o
+  persistencia.
+- Pages CSP: la publicacion estatica usa base `/chess-coach-play/` y una CSP
+  compatible con GitHub Pages mediante metadatos, no mediante cabeceras.
+- Source boundaries: `web -> coach -> engine` y `web -> chess-core`; `coach`,
+  `engine` y `chess-core` no importan componentes de `apps/web`.
+
 ### `packages/coach`
 
 Consume posiciones y resultados normalizados del motor. Produce feedback estructurado;

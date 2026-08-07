@@ -207,6 +207,7 @@ export class EngineBootstrapError extends EngineUnavailableError {
 const SIMULATED_DEPTH = 1;
 const CENTIPAWN_STEP_PER_RANK = 10;
 const MAXIMUM_PRINCIPAL_VARIATION_MOVES = 128;
+const MAXIMUM_UCI_INFO_LINE_LENGTH = 1024;
 const BOOTSTRAP_TIMEOUT_MILLISECONDS = 15000;
 const READY_HANDSHAKE_TIMEOUT_MILLISECONDS = 15000;
 const SEARCH_TIMEOUT_MILLISECONDS = 5000;
@@ -373,6 +374,11 @@ function validateOpponentRequest(request: OpponentRequest): void {
   }
   loadPosition(request.fen);
   loadPosition(request.initialFen);
+  if (!doesHistoryReproduceFen(request.initialFen, request.moves, request.fen)) {
+    throw new InvalidAnalysisRequestError(
+      "Opponent history does not reproduce the requested FEN",
+    );
+  }
 }
 
 function isSafeNonNegativeInteger(value: number): boolean {
@@ -479,13 +485,36 @@ function isLegalPrincipalVariation(
   }
 }
 
+function doesHistoryReproduceFen(
+  initialFen: string,
+  moves: readonly string[],
+  expectedFen: string,
+): boolean {
+  try {
+    let position = loadPosition(initialFen);
+    for (const move of moves) {
+      const input = parseUciMove(move);
+      if (input === undefined) return false;
+      position = applyMove(position, input);
+    }
+    return position.fen === expectedFen;
+  } catch {
+    return false;
+  }
+}
+
 function parseInfoLine(
   line: string,
   turn: PlayerColor,
   perspective: PlayerColor,
   maximumRank: number,
 ): ParsedInfoLine | undefined {
-  if (!line.startsWith("info ")) return undefined;
+  if (
+    !line.startsWith("info ") ||
+    line.length > MAXIMUM_UCI_INFO_LINE_LENGTH
+  ) {
+    return undefined;
+  }
   const parsedDepth = parseInfoNumber(line, "depth");
   const parsedNodes = parseInfoNumber(line, "nodes");
   const parsedRank = parseInfoNumber(line, "multipv");

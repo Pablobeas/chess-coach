@@ -192,11 +192,11 @@ test("publish workflow uses the official GitHub Pages artifact flow", async () =
   );
   assert.match(
     workflow,
-    /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/,
+    /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803/,
   );
   assert.match(
     workflow,
-    /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/,
+    /actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38/,
   );
   assert.match(
     workflow,

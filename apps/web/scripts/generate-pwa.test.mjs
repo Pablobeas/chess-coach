@@ -10,6 +10,7 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(scriptDirectory, "generate-pwa.mjs");
+const webRoot = dirname(scriptDirectory);
 
 async function withTempWebDist(run) {
   const projectRoot = await mkdtemp(join(tmpdir(), "generate-pwa-"));
@@ -51,6 +52,13 @@ async function writeDistFile(distRoot, relativePath, contents) {
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, contents);
 }
+
+test("the application document uses the public Alfil Norte title", async () => {
+  const sourceIndex = await readFile(join(webRoot, "index.html"), "utf8");
+
+  assert.match(sourceIndex, /<title>Alfil Norte<\/title>/);
+  assert.doesNotMatch(sourceIndex, /<title>Chess Coach<\/title>/);
+});
 
 test("precache includes the Stockfish ASM fallback launcher assets", async () => {
   await withTempWebDist(async ({ webRoot, distRoot }) => {

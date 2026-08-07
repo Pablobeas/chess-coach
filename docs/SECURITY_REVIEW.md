@@ -35,8 +35,8 @@ Conclusión corta:
 ### 3. Informational - `DOC-SEC-001` - La política de seguridad y reporte existe en la raíz del repositorio
 
 - Rule ID: `DOC-SEC-001`
-- Ubicación: `SECURITY.md:1-31`, `README.md:8`, `README.md:121`
-- Evidencia: `SECURITY.md` existe en la raíz del repositorio, describe divulgación responsable y ofrece dos canales de reporte: email y GitHub Security Advisory privado. El README enlaza a esa ruta real.
+- Ubicación: `SECURITY.md:1-31`, `README.md:5-11`
+- Evidencia: `SECURITY.md` existe en la raíz del repositorio, describe divulgación responsable y ofrece dos canales de reporte: email y GitHub Security Advisory privado. El README enlaza a esa ruta real desde el bloque principal de navegación.
 - Impacto: mejora la claridad pública sobre reporte responsable y reduce ambigüedad operativa para disclosure.
 - Fix: mantener `SECURITY.md` como fuente de verdad y conservar el enlace desde `README.md`.
 - Mitigación / false positives: es un control documental y operativo; no cambia por sí solo los riesgos runtime ya descritos.
@@ -52,14 +52,14 @@ Conclusión corta:
 - Mitigación / false positives: el control no protege frente a un host ya comprometido; ese escenario está fuera de alcance.
 - Status: `Addressed`
 
-### 5. Informational - `PUB-ALLOWLIST-001` - El publicador a Pages bloquea artefactos sensibles y tipos no previstos
+### 5. Informational - `PUB-ALLOWLIST-001` - El despliegue oficial de Pages combina validación de artefactos y permisos mínimos
 
 - Rule ID: `PUB-ALLOWLIST-001`
-- Ubicación: `tools/publish-pages.mjs:30-40`, `tools/publish-pages.mjs:110-118`, `tools/publish-pages.mjs:159-228`, `.github/workflows/publish-pages.yml:40-50`, `tools/publish-pages.test.mjs:49-158`
-- Evidencia: denylist para `.git`, `.env`, `.runtime`, source maps, checkpoints, claves y secretos; allowlist cerrada de extensiones; validación obligatoria antes de `sync`; tests que rechazan `.map`, checkpoints, `.env.production`, `.pem` y binarios no soportados.
-- Impacto: baja el riesgo operativo de filtrar material sensible al espejo público.
+- Ubicación: `tools/publish-pages.mjs:22-30`, `tools/publish-pages.mjs:57`, `tools/publish-pages.mjs:146-175`, `.github/workflows/publish-pages.yml:9-13`, `.github/workflows/publish-pages.yml:37-70`, `apps/web/package.json:7-11`, `tools/publish-pages.test.mjs:180-243`
+- Evidencia: denylist para `.git`, `.env`, `.runtime`, source maps, checkpoints, claves y secretos; HTML obligatorio `index.html` y `404.html`; validación previa del árbol publicado; `pnpm build:pages` genera la base pública `/chess-coach/`; el workflow usa las acciones oficiales y fijadas `configure-pages`, `upload-pages-artifact` y `deploy-pages`, con permisos mínimos `contents: read`, `pages: write` e `id-token: write`, sin deploy key SSH, sin mirror paralelo y sin clonación hacia otro repositorio.
+- Impacto: baja el riesgo operativo de filtrar material sensible al artefacto público y reduce manejo adicional de secretos de despliegue.
 - Fix: conservar esta validación como requisito previo a cualquier cambio del workflow o del árbol publicado.
-- Mitigación / false positives: no sustituye una revisión del historial Git previo ni de la configuración de visibilidad del repo público.
+- Mitigación / false positives: no sustituye una revisión del historial Git previo ni de la configuración de visibilidad del propio repositorio público.
 - Status: `Addressed`
 
 ### 6. Informational - `INPUT-LOCAL-001` - Las entradas locales tienen límites y los logs depuran sin filtrar FEN/PGN
@@ -87,7 +87,7 @@ Conclusión corta:
 ### Secretos
 
 - No se observaron secretos embebidos en `apps/web` ni en el árbol de publicación previsto.
-- El workflow usa `PAGES_DEPLOY_KEY` como secret de Actions y desactiva credenciales persistentes de `checkout` (`.github/workflows/publish-pages.yml:26-30`, `52-69`).
+- El workflow de Pages usa el flujo oficial de artifact + deploy con `pages: write` e `id-token: write`; no depende de `PAGES_DEPLOY_KEY`, mirrors SSH ni claves de despliegue adicionales (`.github/workflows/publish-pages.yml:9-13`, `37-70`, `tools/publish-pages.test.mjs:180-243`).
 - El publicador bloquea `.env`, claves, `known_hosts`, `authorized_keys`, ficheros `credential|secret` y extensiones privadas (`tools/publish-pages.mjs:30-39`).
 
 ### PII
@@ -115,6 +115,6 @@ La demo pública estática es razonablemente apta para visibilidad de portfolio 
 La decisión de publicación pública no debería condicionarse por el runtime actual, sino por dos verificaciones operativas externas al código:
 
 1. que el historial completo del repositorio público no haya expuesto nunca secretos, artefactos privados ni contenido que deba permanecer privado;
-2. que la visibilidad pública del espejo `chess-coach-play` y de GitHub Pages sea intencional y revisada por el mantenedor.
+2. que la visibilidad pública del repositorio `Pablobeas/chess-coach` y de GitHub Pages sea intencional y revisada por el mantenedor.
 
 Si esas dos comprobaciones son satisfactorias, no veo un bloqueo técnico adicional para la demo estática actual. Si en el futuro se amplía el alcance a backend remoto, autenticación, telemetría o redistribución de Maia, esta revisión deja de ser suficiente y debe rehacerse.

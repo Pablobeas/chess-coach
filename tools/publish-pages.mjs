@@ -1,13 +1,5 @@
-import {
-  copyFile,
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -62,7 +54,7 @@ const ALLOWED_PUBLISH_EXTENSIONS = new Set([
   ".woff2",
   ".xml",
 ]);
-const REQUIRED_PUBLISH_HTML_FILES = Object.freeze(["index.html"]);
+const REQUIRED_PUBLISH_HTML_FILES = Object.freeze(["index.html", "404.html"]);
 
 function normalizePath(pathname) {
   return pathname.split(sep).join("/");
@@ -120,7 +112,14 @@ function ensureRelativePathAllowed(relativePath) {
 
 async function preparePublishHtmlArtifact(sourceRoot, relativePath) {
   const absolutePath = join(sourceRoot, relativePath);
-  const html = await readFile(absolutePath, "utf8");
+  let html;
+  try {
+    html = await readFile(absolutePath, "utf8");
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : `Missing publish artifact: ${relativePath}`;
+    throw new Error(`Publish artifact ${relativePath} is not accessible: ${message}`);
+  }
   const hasMarker = html.includes(PAGES_CSP_MARKER);
   const hasMeta = html.includes(PAGES_CSP_META_TAG);
 
@@ -141,18 +140,6 @@ async function preparePublishHtmlArtifact(sourceRoot, relativePath) {
 async function preparePublishTree(sourceRoot) {
   for (const relativePath of REQUIRED_PUBLISH_HTML_FILES) {
     await preparePublishHtmlArtifact(sourceRoot, relativePath);
-  }
-
-  const spaFallbackPath = join(sourceRoot, "404.html");
-  try {
-    const details = await stat(spaFallbackPath);
-    if (details.isFile()) {
-      await preparePublishHtmlArtifact(sourceRoot, "404.html");
-    }
-  } catch (error) {
-    if (!(error instanceof Error) || !/ENOENT/i.test(error.message)) {
-      throw error;
-    }
   }
 }
 
@@ -181,69 +168,18 @@ export async function validatePublishTree(sourceRoot) {
   return files;
 }
 
-function assertSafeSyncRoots(sourceRoot, targetRoot) {
-  const resolvedSource = resolve(sourceRoot);
-  const resolvedTarget = resolve(targetRoot);
-  if (resolvedSource === resolvedTarget) {
-    throw new Error("Publish source and target must be different directories");
-  }
-  const sourcePrefix = `${resolvedSource}${sep}`;
-  const targetPrefix = `${resolvedTarget}${sep}`;
-  if (resolvedSource.startsWith(targetPrefix)) {
-    throw new Error("Publish source cannot be inside the publish target");
-  }
-  if (resolvedTarget.startsWith(sourcePrefix)) {
-    throw new Error("Publish target cannot be inside the publish source");
-  }
-}
-
-async function assertGitWorktree(targetRoot) {
-  await assertDirectory(targetRoot, "Publish target");
-  await assertDirectory(join(targetRoot, ".git"), "Publish target .git");
-}
-
-async function clearTargetWorktree(targetRoot) {
-  const entries = await readdir(targetRoot, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name === ".git") continue;
-    await rm(join(targetRoot, entry.name), { force: true, recursive: true });
-  }
-}
-
-async function copyPublishFiles(sourceRoot, targetRoot, files) {
-  for (const file of files) {
-    const target = join(targetRoot, file.relativePath);
-    await mkdir(dirname(target), { recursive: true });
-    await copyFile(join(sourceRoot, file.relativePath), target);
-  }
-}
-
-export async function syncPublishTree(sourceRoot, targetRoot) {
-  assertSafeSyncRoots(sourceRoot, targetRoot);
-  const files = await validatePublishTree(sourceRoot);
-  await assertGitWorktree(targetRoot);
-  await clearTargetWorktree(targetRoot);
-  await copyPublishFiles(sourceRoot, targetRoot, files);
-  return files.map((file) => file.relativePath);
-}
-
 async function main(argv = process.argv.slice(2)) {
-  const [command, sourceArg, targetArg] = argv;
+  const [command, sourceArg] = argv;
   if (command === "validate" && sourceArg) {
     const files = await validatePublishTree(resolve(sourceArg));
     process.stdout.write(`Validated ${files.length} publish artifacts.\n`);
-    return;
-  }
-  if (command === "sync" && sourceArg && targetArg) {
-    const files = await syncPublishTree(resolve(sourceArg), resolve(targetArg));
-    process.stdout.write(`Synced ${files.length} publish artifacts.\n`);
     return;
   }
 
   const scriptPath = fileURLToPath(import.meta.url);
   const scriptName = normalizePath(relative(process.cwd(), scriptPath));
   throw new Error(
-    `Usage: node ${scriptName} validate <source-dir> | sync <source-dir> <target-dir>`,
+    `Usage: node ${scriptName} validate <source-dir>`,
   );
 }
 

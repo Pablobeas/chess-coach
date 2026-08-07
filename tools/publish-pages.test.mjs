@@ -1,21 +1,14 @@
 import assert from "node:assert/strict";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  PAGES_CSP_META_TAG,
-  syncPublishTree,
-  validatePublishTree,
-} from "./publish-pages.mjs";
+import { PAGES_CSP_META_TAG, validatePublishTree } from "./publish-pages.mjs";
+
+const CONFIGURE_PAGES_SHA = "45bfe0192ca1faeb007ade9deae92b16b8254a0d";
+const UPLOAD_PAGES_ARTIFACT_SHA = "fc324d3547104276b827a68afc52ff2a11cc49c9";
+const DEPLOY_PAGES_SHA = "cd2ce8fcbc39b97be8ca5fce6e763baed58fa128";
 
 async function withTempDir(run) {
   const root = await mkdtemp(join(tmpdir(), "publish-pages-"));
@@ -32,25 +25,16 @@ async function writeProjectFile(projectRoot, relativePath, contents) {
   await writeFile(target, contents);
 }
 
-async function listRelativeFiles(root, base = root) {
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = [];
-  for (const entry of entries) {
-    const target = join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await listRelativeFiles(target, base)));
-      continue;
-    }
-    files.push(target.slice(base.length + 1).replaceAll("\\", "/"));
-  }
-  return files.sort((left, right) => left.localeCompare(right));
-}
-
 test("validatePublishTree rejects source maps and checkpoint artifacts", async () => {
   await withTempDir(async (projectRoot) => {
     await writeProjectFile(
       projectRoot,
       "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/404.html",
       "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
     );
     await writeProjectFile(projectRoot, "dist-pages/assets/app.js.map", "{}");
@@ -65,6 +49,11 @@ test("validatePublishTree rejects source maps and checkpoint artifacts", async (
     await writeProjectFile(
       projectRoot,
       "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/404.html",
       "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
     );
     await writeProjectFile(projectRoot, "dist-pages/models/checkpoint.bin", "x");
@@ -113,11 +102,32 @@ test("validatePublishTree injects a Pages CSP meta tag into index and 404 artifa
   });
 });
 
+test("validatePublishTree requires the SPA fallback artifact", async () => {
+  await withTempDir(async (projectRoot) => {
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(projectRoot, "dist-pages/assets/app.js", "console.log('ok');\n");
+
+    await assert.rejects(
+      () => validatePublishTree(join(projectRoot, "dist-pages")),
+      /Publish artifact 404\.html is not accessible/,
+    );
+  });
+});
+
 test("validatePublishTree rejects hidden runtime artifacts and unsupported file types", async () => {
   await withTempDir(async (projectRoot) => {
     await writeProjectFile(
       projectRoot,
       "dist-pages/index.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/404.html",
       "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
     );
     await writeProjectFile(projectRoot, "dist-pages/.env.production", "SECRET=1\n");
@@ -134,6 +144,11 @@ test("validatePublishTree rejects hidden runtime artifacts and unsupported file 
       "dist-pages/index.html",
       "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
     );
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/404.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
     await writeProjectFile(projectRoot, "dist-pages/secrets.pem", "pem\n");
 
     await assert.rejects(
@@ -148,6 +163,11 @@ test("validatePublishTree rejects hidden runtime artifacts and unsupported file 
       "dist-pages/index.html",
       "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
     );
+    await writeProjectFile(
+      projectRoot,
+      "dist-pages/404.html",
+      "<!doctype html><html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>",
+    );
     await writeProjectFile(projectRoot, "dist-pages/cache/data.bin", "x");
 
     await assert.rejects(
@@ -157,84 +177,7 @@ test("validatePublishTree rejects hidden runtime artifacts and unsupported file 
   });
 });
 
-test("syncPublishTree replaces the target worktree contents and preserves .git", async () => {
-  await withTempDir(async (projectRoot) => {
-    const sourceRoot = join(projectRoot, "source");
-    const targetRoot = join(projectRoot, "target");
-
-    await writeProjectFile(
-      sourceRoot,
-      "index.html",
-      "<!doctype html>\n<html>\n  <head>\n    <!-- __CHESS_COACH_PAGES_CSP__ -->\n  </head>\n</html>\n",
-    );
-    await writeProjectFile(sourceRoot, "assets/app.js", "console.log('ok');\n");
-    await writeProjectFile(targetRoot, ".git/HEAD", "ref: refs/heads/main\n");
-    await writeProjectFile(targetRoot, "old.txt", "stale\n");
-    await writeProjectFile(targetRoot, "nested/old.css", "stale\n");
-
-    const syncedFiles = await syncPublishTree(sourceRoot, targetRoot);
-
-    assert.deepEqual(syncedFiles, ["assets/app.js", "index.html"]);
-    assert.deepEqual(await listRelativeFiles(targetRoot), [
-      ".git/HEAD",
-      "assets/app.js",
-      "index.html",
-    ]);
-    assert.equal(
-      await readFile(join(targetRoot, "assets/app.js"), "utf8"),
-      "console.log('ok');\n",
-    );
-    assert.match(
-      await readFile(join(targetRoot, "index.html"), "utf8"),
-      new RegExp(PAGES_CSP_META_TAG.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-  });
-});
-
-test("syncPublishTree rejects nested source and target directories before mutating target", async () => {
-  await withTempDir(async (projectRoot) => {
-    const targetRoot = join(projectRoot, "public-repo");
-    const sourceInsideTarget = join(targetRoot, "dist-pages");
-
-    await writeProjectFile(
-      sourceInsideTarget,
-      "index.html",
-      "<!doctype html>\n<html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>\n",
-    );
-    await writeProjectFile(targetRoot, ".git/HEAD", "ref: refs/heads/main\n");
-    await writeProjectFile(targetRoot, "keep.txt", "keep\n");
-
-    await assert.rejects(
-      () => syncPublishTree(sourceInsideTarget, targetRoot),
-      /Publish source cannot be inside the publish target/,
-    );
-    assert.equal(await readFile(join(targetRoot, "keep.txt"), "utf8"), "keep\n");
-  });
-
-  await withTempDir(async (projectRoot) => {
-    const sourceRoot = projectRoot;
-    const targetInsideSource = join(projectRoot, "public-repo");
-
-    await writeProjectFile(
-      sourceRoot,
-      "dist-pages/index.html",
-      "<!doctype html>\n<html><head><!-- __CHESS_COACH_PAGES_CSP__ --></head></html>\n",
-    );
-    await writeProjectFile(targetInsideSource, ".git/HEAD", "ref: refs/heads/main\n");
-    await writeProjectFile(targetInsideSource, "keep.txt", "keep\n");
-
-    await assert.rejects(
-      () => syncPublishTree(sourceRoot, targetInsideSource),
-      /Publish target cannot be inside the publish source/,
-    );
-    assert.equal(
-      await readFile(join(targetInsideSource, "keep.txt"), "utf8"),
-      "keep\n",
-    );
-  });
-});
-
-test("publish workflow keeps the expected trigger, validation, and SSH publish flow", async () => {
+test("publish workflow uses the official GitHub Pages artifact flow", async () => {
   const workflowPath = fileURLToPath(
     new URL("../.github/workflows/publish-pages.yml", import.meta.url),
   );
@@ -255,6 +198,18 @@ test("publish workflow keeps the expected trigger, validation, and SSH publish f
     workflow,
     /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/,
   );
+  assert.match(
+    workflow,
+    new RegExp(`actions/configure-pages@${CONFIGURE_PAGES_SHA}`),
+  );
+  assert.match(
+    workflow,
+    new RegExp(`actions/upload-pages-artifact@${UPLOAD_PAGES_ARTIFACT_SHA}`),
+  );
+  assert.match(
+    workflow,
+    new RegExp(`actions/deploy-pages@${DEPLOY_PAGES_SHA}`),
+  );
   assert.match(workflow, /corepack enable/);
   assert.doesNotMatch(workflow, /cache:\s*pnpm/);
   assert.match(workflow, /pnpm install --frozen-lockfile/);
@@ -264,30 +219,25 @@ test("publish workflow keeps the expected trigger, validation, and SSH publish f
     workflow,
     /node tools\/publish-pages\.mjs validate "\$PUBLISH_SOURCE"/,
   );
-  assert.match(workflow, /PAGES_DEPLOY_KEY/);
-  assert.doesNotMatch(
+  assert.match(
     workflow,
-    /env:\n  TARGET_REPO: Pablobeas\/chess-coach-play\n  TARGET_BRANCH: main\n  PUBLISH_SOURCE: apps\/web\/dist-pages\n  PUBLISH_TARGET:/,
+    /permissions:\n  contents: read\n  pages: write\n  id-token: write/,
   );
   assert.match(
     workflow,
-    /- name: Clone public Pages repository[\s\S]*?env:\n\s+PUBLISH_TARGET: \$\{\{ runner\.temp \}\}\/pages-repo/,
+    /environment:\n\s+name: github-pages\n\s+url: \$\{\{\s*steps\.deployment\.outputs\.page_url\s*\}\}/,
   );
   assert.match(
     workflow,
-    /github\.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl/,
+    /needs: build/,
   );
   assert.match(
     workflow,
-    /git clone --depth 1 --branch "\$TARGET_BRANCH" "git@github\.com:\$\{TARGET_REPO\}\.git" "\$PUBLISH_TARGET"/,
+    /with:\n\s+path: \$\{\{\s*env\.PUBLISH_SOURCE\s*\}\}/,
   );
-  assert.match(
-    workflow,
-    /node tools\/publish-pages\.mjs sync "\$PUBLISH_SOURCE" "\$PUBLISH_TARGET"/,
-  );
-  assert.match(
-    workflow,
-    /git commit -m "Publish \$\{GITHUB_REPOSITORY\}@\$\{GITHUB_SHA\}"/,
-  );
-  assert.match(workflow, /git push origin "HEAD:\$TARGET_BRANCH"/);
+  assert.doesNotMatch(workflow, /PAGES_DEPLOY_KEY/);
+  assert.doesNotMatch(workflow, /TARGET_REPO|TARGET_BRANCH|PUBLISH_TARGET/);
+  assert.doesNotMatch(workflow, /git@github\.com/);
+  assert.doesNotMatch(workflow, /git clone --depth 1/);
+  assert.doesNotMatch(workflow, /node tools\/publish-pages\.mjs sync /);
 });

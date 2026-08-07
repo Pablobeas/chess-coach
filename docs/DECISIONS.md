@@ -12,212 +12,212 @@ Al promover una variante, la principal anterior se elimina y sus descendientes s
 
 **Estado:** aceptada.
 
-Se empieza con React/Vite y PWA para compartir implementaciÃƒÂ³n entre escritorio y
-mÃƒÂ³vil. Una envoltura nativa puede evaluarse despuÃƒÂ©s de validar la experiencia.
+Se empieza con React/Vite y PWA para compartir implementación entre escritorio y
+móvil. Una envoltura nativa puede evaluarse después de validar la experiencia.
 
-## ADR-002 Ã¢â‚¬â€ AnÃƒÂ¡lisis local
+## ADR-002 — Análisis local
 
 **Estado:** aceptada.
 
-La fuente de verdad serÃƒÂ¡ un motor UCI en WebAssembly ejecutado en Worker. El MVP no
-dependerÃƒÂ¡ de una API de anÃƒÂ¡lisis.
+La fuente de verdad será un motor UCI en WebAssembly ejecutado en Worker. El MVP no
+dependerá de una API de análisis.
 
-## ADR-003 Ã¢â‚¬â€ Contratos separados
+## ADR-003 — Contratos separados
 
 **Estado:** aceptada.
 
 Reglas, motor, entrenador y UI son paquetes/capas diferentes. Esto permite probar
-la pedagogÃƒÂ­a con resultados simulados y cambiar el motor sin reescribir la UI.
+la pedagogía con resultados simulados y cambiar el motor sin reescribir la UI.
 
-## ADR-004 Ã¢â‚¬â€ WDL antes que porcentaje inventado
+## ADR-004 — WDL antes que porcentaje inventado
 
 **Estado:** aceptada.
 
-Se usarÃƒÂ¡ WDL cuando estÃƒÂ© disponible y una curva calibrada cuando no. Cualquier valor
-visible se nombrarÃƒÂ¡ como estimaciÃƒÂ³n y conservarÃƒÂ¡ su versiÃƒÂ³n de calibraciÃƒÂ³n.
+Se usará WDL cuando esté disponible y una curva calibrada cuando no. Cualquier valor
+visible se nombrará como estimación y conservará su versión de calibración.
 
-## ADR-005 Ã¢â‚¬â€ OrquestaciÃƒÂ³n Codex por roles
+## ADR-005 — Orquestación Codex por roles
 
 **Estado:** aceptada.
 
 El agente principal usa Sol con razonamiento alto exclusivamente como jefe de
-orquestaciÃƒÂ³n: planifica, define criterios, asigna, media, decide y sintetiza. No
+orquestación: planifica, define criterios, asigna, media, decide y sintetiza. No
 implementa, no edita archivos, no genera activos y no ejecuta validaciones rutinarias.
-Cada encargo se clasifica antes de ejecutarse y se delega al rol ejecutor mÃƒÂ¡s especÃƒÂ­fico,
-incluso si solo tiene una lÃƒÂ­nea de trabajo. GPT-5.4 implementa motor y cÃƒÂ³digo general;
-Terra cubre frontend, coaching y activos visuales originales; Luna explora y evalÃƒÂºa;
-GPT-5.4 mini realiza cambios mecÃƒÂ¡nicos; y GPT-5.5 aporta una revisiÃƒÂ³n independiente
+Cada encargo se clasifica antes de ejecutarse y se delega al rol ejecutor más específico,
+incluso si solo tiene una línea de trabajo. GPT-5.4 implementa motor y código general;
+Terra cubre frontend, coaching y activos visuales originales; Luna explora y evalúa;
+GPT-5.4 mini realiza cambios mecánicos; y GPT-5.5 aporta una revisión independiente
 read-only.
 
-Cada entrega del ejecutor incluye un handoff con diff, evidencia y riesgos. Sol envÃƒÂ­a ese
+Cada entrega del ejecutor incluye un handoff con diff, evidencia y riesgos. Sol envía ese
 material al revisor y devuelve `NEEDS_CHANGES` al mismo ejecutor mediante follow-up,
-conservando la propiedad de archivos. El ciclo continÃƒÂºa mientras haya progreso y termina
+conservando la propiedad de archivos. El ciclo continúa mientras haya progreso y termina
 con `APPROVED` y criterios/pruebas cumplidos, ante un bloqueo que exige usuario, permiso o
-expansiÃƒÂ³n, o por estancamiento cuando se repite un hallazgo sin evidencia nueva. El revisor
-puede responder `APPROVED_WITH_CONTINUATION`; Sol solo inicia esa continuaciÃƒÂ³n si es
+expansión, o por estancamiento cuando se repite un hallazgo sin evidencia nueva. El revisor
+puede responder `APPROVED_WITH_CONTINUATION`; Sol solo inicia esa continuación si es
 concreta, medible, segura y permanece dentro del objetivo original. Las expansiones se
 presentan al usuario.
 
-La polÃƒÂ­tica del repositorio limita la profundidad a 1 para evitar delegaciÃƒÂ³n
-recursiva y la concurrencia a cuatro subagentes. Estos lÃƒÂ­mites viven en `AGENTS.md`
-para ser compatibles con las superficies de Codex que usan esquemas de configuraciÃƒÂ³n
+La política del repositorio limita la profundidad a 1 para evitar delegación
+recursiva y la concurrencia a cuatro subagentes. Estos límites viven en `AGENTS.md`
+para ser compatibles con las superficies de Codex que usan esquemas de configuración
 distintos. Los modelos configurados son preferencias por rol, no concesiones de
 acceso: si una cuenta o superficie no ofrece uno, el orquestador mantiene el rol y
-declara el fallback disponible mÃƒÂ¡s cercano.
+declara el fallback disponible más cercano.
 
-## ADR-006 Ã¢â‚¬â€ Feedback determinista sin LLM
+## ADR-006 — Feedback determinista sin LLM
 
 **Estado:** aceptada.
 
-El MVP no utilizarÃƒÂ¡ modelos de lenguaje remotos ni locales. Las explicaciones se
+El MVP no utilizará modelos de lenguaje remotos ni locales. Las explicaciones se
 generan con evidencia de Stockfish, detectores de motivos y plantillas localizadas.
 Esto mantiene el producto offline, reproducible y libre de coste por inferencia.
 
-Ollama queda aplazado, no como dependencia prevista. Solo se reconsiderarÃƒÂ¡ mediante
-una ADR nueva si una evaluaciÃƒÂ³n demuestra una mejora pedagÃƒÂ³gica concreta que no pueda
-lograrse con reglas, y siempre como opciÃƒÂ³n desactivada por defecto con fallback local
+Ollama queda aplazado, no como dependencia prevista. Solo se reconsiderará mediante
+una ADR nueva si una evaluación demuestra una mejora pedagógica concreta que no pueda
+lograrse con reglas, y siempre como opción desactivada por defecto con fallback local
 determinista.
 
-## ADR-007 Ã¢â‚¬â€ Desarrollo vertical con TDD selectivo
+## ADR-007 — Desarrollo vertical con TDD selectivo
 
 **Estado:** aceptada.
 
 Las entregas se organizan como funcionalidades verticales completas. Dentro de cada
 funcionalidad se aplica TDD a reglas de ajedrez, contratos UCI, concurrencia,
-cancelaciÃƒÂ³n, mÃƒÂ©tricas, persistencia y otros comportamientos deterministas. La UI y
-el diseÃƒÂ±o pueden iterarse exploratoriamente, pero deben acabar con criterios de
-aceptaciÃƒÂ³n y pruebas de regresiÃƒÂ³n apropiadas.
+cancelación, métricas, persistencia y otros comportamientos deterministas. La UI y
+el diseño pueden iterarse exploratoriamente, pero deben acabar con criterios de
+aceptación y pruebas de regresión apropiadas.
 
-Esta combinaciÃƒÂ³n mantiene el foco en valor usable sin sacrificar confianza en las
-partes donde un error serÃƒÂ­a difÃƒÂ­cil de detectar manualmente.
+Esta combinación mantiene el foco en valor usable sin sacrificar confianza en las
+partes donde un error sería difícil de detectar manualmente.
 
-## ADR-008 Ã¢â‚¬â€ Piezas de ajedrez originales y locales
+## ADR-008 — Piezas de ajedrez originales y locales
 
 **Estado:** aceptada.
 
-El tablero utiliza un juego de piezas SVG dibujado especÃƒÂ­ficamente para el proyecto.
-Puede compartir el lenguaje visual general de piezas Staunton digitales Ã¢â‚¬â€volumen,
-contorno y legibilidadÃ¢â‚¬â€, pero no incorpora, descarga ni traza activos de Chess.com u
-otros servicios. Las siluetas, gradientes y detalles se mantienen como cÃƒÂ³digo local
-para que la experiencia siga funcionando sin red y no aÃƒÂ±ada dependencias de terceros.
+El tablero utiliza un juego de piezas SVG dibujado específicamente para el proyecto.
+Puede compartir el lenguaje visual general de piezas Staunton digitales —volumen,
+contorno y legibilidad—, pero no incorpora, descarga ni traza activos de Chess.com u
+otros servicios. Las siluetas, gradientes y detalles se mantienen como código local
+para que la experiencia siga funcionando sin red y no añada dependencias de terceros.
 
 Los cambios futuros del juego de piezas deben conservar una procedencia documentada.
-Un activo externo solo podrÃƒÂ¡ incorporarse despuÃƒÂ©s de verificar su licencia y actualizar
+Un activo externo solo podrá incorporarse después de verificar su licencia y actualizar
 `docs/THIRD_PARTY.md` antes de distribuirlo.
 
-## ADR-009 Ã¢â‚¬â€ Maia-3 como oponente en el modo de escritorio local
+## ADR-009 — Maia-3 como oponente en el modo de escritorio local
 
-**Estado:** aceptada con restricciÃƒÂ³n de distribuciÃƒÂ³n.
+**Estado:** aceptada con restricción de distribución.
 
 El oponente humano-realista usa Maia-3 5M mediante su interfaz UCI. Un companion Node
 local mantiene el proceso Python/PyTorch caliente y ofrece a la PWA un contrato HTTP
-limitado a `127.0.0.1`. Stockfish WASM permanece separado y continÃƒÂºa siendo la fuente
-de verdad para evaluaciÃƒÂ³n y feedback; Maia-3 solo selecciona movimientos del rival.
+limitado a `127.0.0.1`. Stockfish WASM permanece separado y continúa siendo la fuente
+de verdad para evaluación y feedback; Maia-3 solo selecciona movimientos del rival.
 
-Se elige el modelo 5M por su latencia y tamaÃƒÂ±o. `pnpm dev` y `play` instalan el cÃƒÂ³digo
+Se elige el modelo 5M por su latencia y tamaño. `pnpm dev` y `play` instalan el código
 desde el commit oficial fijado, verifican el SHA-256 del checkpoint y no exponen la web
 hasta que el bridge responde `ready` tras un calentamiento real. El entorno y los pesos
-viven bajo `.runtime`, fuera del repositorio, y solo la primera preparaciÃƒÂ³n necesita red.
+viven bajo `.runtime`, fuera del repositorio, y solo la primera preparación necesita red.
 
-El cÃƒÂ³digo upstream estÃƒÂ¡ bajo AGPL-3.0. La tarjeta pÃƒÂºblica del checkpoint no declara
-una licencia de pesos inequÃƒÂ­voca por separado: hasta obtener confirmaciÃƒÂ³n del autor,
-no se empaquetarÃƒÂ¡n ni redistribuirÃƒÂ¡n cÃƒÂ³digo, entorno o pesos de Maia-3. El instalador
+El código upstream está bajo AGPL-3.0. La tarjeta pública del checkpoint no declara
+una licencia de pesos inequívoca por separado: hasta obtener confirmación del autor,
+no se empaquetarán ni redistribuirán código, entorno o pesos de Maia-3. El instalador
 personal descarga el material directamente de sus fuentes oficiales.
 
-## ADR-010 Ã¢â‚¬â€ Voz editorial determinista y lÃƒÂ­nea temporal analÃƒÂ­tica
+## ADR-010 — Voz editorial determinista y línea temporal analítica
 
 **Estado:** aceptada.
 
-El entrenador usa una voz cercana y serena compuesta mediante plantillas espaÃƒÂ±olas
-versionadas. Cada frase se deriva de evidencia validada; la variaciÃƒÂ³n solo modifica
-cadencia y entrada, es reproducible y no puede introducir hechos nuevos. No se aÃƒÂ±ade
-LLM ni sÃƒÂ­ntesis de voz al camino principal.
+El entrenador usa una voz cercana y serena compuesta mediante plantillas españolas
+versionadas. Cada frase se deriva de evidencia validada; la variación solo modifica
+cadencia y entrada, es reproducible y no puede introducir hechos nuevos. No se añade
+LLM ni síntesis de voz al camino principal.
 
-Stockfish evalÃƒÂºa cada posiciÃƒÂ³n desde la perspectiva elegida por el usuario. El
-historial muestra la cifra tras las jugadas de ambos bandos, pero reserva clasificaciÃƒÂ³n,
-icono y explicaciÃƒÂ³n para las decisiones del usuario. Los registros se indexan por
+Stockfish evalúa cada posición desde la perspectiva elegida por el usuario. El
+historial muestra la cifra tras las jugadas de ambos bandos, pero reserva clasificación,
+icono y explicación para las decisiones del usuario. Los registros se indexan por
 media jugada para que navegar, persistir o crear una rama no mezcle feedback de
 posiciones distintas.
 
-## ADR-011 Ã¢â‚¬â€ Trabajo incremental en partidas largas
+## ADR-011 — Trabajo incremental en partidas largas
 
 **Estado:** aceptada.
 
-Una sesiÃƒÂ³n creada por `chess-core` avanza desde su FEN actual y mantiene el PGN de
-forma incremental. Las sesiones deserializadas siguen reproduciÃƒÂ©ndose y validÃƒÂ¡ndose
-antes de considerarse confiables. Deshacer una sesiÃƒÂ³n creada durante la ejecuciÃƒÂ³n
+Una sesión creada por `chess-core` avanza desde su FEN actual y mantiene el PGN de
+forma incremental. Las sesiones deserializadas siguen reproduciéndose y validándose
+antes de considerarse confiables. Deshacer una sesión creada durante la ejecución
 recupera su predecesora sin reconstruir la partida completa.
 
 Cuando varios consumidores necesitan las posiciones de todo el historial, usan un
-ÃƒÂºnico recorrido compartido por media jugada. Persistencia e interfaz no validan cada
-registro mediante deshacer repetido. En Stockfish, `MultiPV` se limita a la posiciÃƒÂ³n
+único recorrido compartido por media jugada. Persistencia e interfaz no validan cada
+registro mediante deshacer repetido. En Stockfish, `MultiPV` se limita a la posición
 donde el entrenador compara alternativas y la legalidad completa se comprueba sobre
-las variantes finales, no sobre cada lÃƒÂ­nea intermedia emitida por UCI.
+las variantes finales, no sobre cada línea intermedia emitida por UCI.
 
-Una cachÃƒÂ© LRU pequeÃƒÂ±a reutiliza ÃƒÂºnicamente anÃƒÂ¡lisis completos cuya FEN, perspectiva,
-preset, MultiPV y lÃƒÂ­mite coinciden. No comparte resultados parciales, cancelados o
-fallidos y su capacidad acotada evita convertir la optimizaciÃƒÂ³n en crecimiento de
+Una caché LRU pequeña reutiliza únicamente análisis completos cuya FEN, perspectiva,
+preset, MultiPV y límite coinciden. No comparte resultados parciales, cancelados o
+fallidos y su capacidad acotada evita convertir la optimización en crecimiento de
 memoria durante sesiones largas.
 
-## ADR-012 Ã¢â‚¬â€ NavegaciÃƒÂ³n por cursor y precÃƒÂ¡lculo exacto
+## ADR-012 — Navegación por cursor y precálculo exacto
 
 **Estado:** aceptada.
 
-La navegaciÃƒÂ³n mantiene una sola `GameSession` con la lÃƒÂ­nea completa y un cursor. Una
-posiciÃƒÂ³n histÃƒÂ³rica se materializa mediante un recorrido hacia delante hasta el cursor;
+La navegación mantiene una sola `GameSession` con la línea completa y un cursor. Una
+posición histórica se materializa mediante un recorrido hacia delante hasta el cursor;
 no se conserva un array de sesiones que repita todos los prefijos y crezca de forma
-cuadrÃƒÂ¡tica. Crear una continuaciÃƒÂ³n es el ÃƒÂºnico momento en que se trunca la lÃƒÂ­nea.
+cuadrática. Crear una continuación es el único momento en que se trunca la línea.
 
-El anÃƒÂ¡lisis de la posiciÃƒÂ³n anterior se inicia durante el tiempo de reflexiÃƒÂ³n del
-usuario con la misma FEN, perspectiva, preset, `MultiPV` y lÃƒÂ­mite que pedirÃƒÂ¡ despuÃƒÂ©s
-el entrenador. La cachÃƒÂ© comparte tanto resultados completos como la promesa exacta en
-curso. La posiciÃƒÂ³n resultante mantiene siempre una bÃƒÂºsqueda independiente y completa:
-las puntuaciones y WDL de una candidata MultiPV pertenecen a la raÃƒÂ­z y no son una
-evaluaciÃƒÂ³n semÃƒÂ¡nticamente equivalente de la posiciÃƒÂ³n hija.
+El análisis de la posición anterior se inicia durante el tiempo de reflexión del
+usuario con la misma FEN, perspectiva, preset, `MultiPV` y límite que pedirá después
+el entrenador. La caché comparte tanto resultados completos como la promesa exacta en
+curso. La posición resultante mantiene siempre una búsqueda independiente y completa:
+las puntuaciones y WDL de una candidata MultiPV pertenecen a la raíz y no son una
+evaluación semánticamente equivalente de la posición hija.
 
 Stockfish recibe `Hash=64` una sola vez durante el arranque UCI y conserva la tabla de
-transposiciÃƒÂ³n entre bÃƒÂºsquedas. No se reducen tiempos, variantes requeridas ni fuerza;
-la mejora desplaza trabajo fuera de la ruta crÃƒÂ­tica y reutiliza ÃƒÂºnicamente cÃƒÂ¡lculos
-idÃƒÂ©nticos.
+transposición entre búsquedas. No se reducen tiempos, variantes requeridas ni fuerza;
+la mejora desplaza trabajo fuera de la ruta crítica y reutiliza únicamente cálculos
+idénticos.
 
-## ADR-013 Ã¢â‚¬â€ Iconos provisionales desde progreso UCI
+## ADR-013 — Iconos provisionales desde progreso UCI
 
 **Estado:** aceptada.
 
-El icono de valoraciÃƒÂ³n puede aparecer antes de `bestmove` usando snapshots `info` de
-la misma bÃƒÂºsqueda posterior. Se espera una profundidad mÃƒÂ­nima de 6, se normalizan
+El icono de valoración puede aparecer antes de `bestmove` usando snapshots `info` de
+la misma búsqueda posterior. Se espera una profundidad mínima de 6, se normalizan
 score y WDL a la perspectiva del usuario y solo se renderiza de nuevo si cambia la
-categorÃƒÂ­a. El estado provisional es transitorio, se anuncia como tal y se elimina al
+categoría. El estado provisional es transitorio, se anuncia como tal y se elimina al
 cancelar, navegar o terminar.
 
 Antes de clasificar un snapshot se reproducen completamente las variantes anterior y
-posterior. Si un backend falla despuÃƒÂ©s de publicar progreso, el adaptador emite un
-`reset` antes del fallback para que nunca sobreviva una valoraciÃƒÂ³n obsoleta.
+posterior. Si un backend falla después de publicar progreso, el adaptador emite un
+`reset` antes del fallback para que nunca sobreviva una valoración obsoleta.
 
-La clasificaciÃƒÂ³n final continÃƒÂºa usando el resultado completo con el presupuesto
-original y es la ÃƒÂºnica que se persiste o alimenta el feedback. No se aÃƒÂ±ade una bÃƒÂºsqueda
-rÃƒÂ¡pida independiente Ã¢â‚¬â€que consumirÃƒÂ­a tiempo adicionalÃ¢â‚¬â€ ni se reutiliza una puntuaciÃƒÂ³n
-MultiPV de la posiciÃƒÂ³n padre como evaluaciÃƒÂ³n del hijo. La funciÃƒÂ³n pura de assessment
+La clasificación final continúa usando el resultado completo con el presupuesto
+original y es la única que se persiste o alimenta el feedback. No se añade una búsqueda
+rápida independiente —que consumiría tiempo adicional— ni se reutiliza una puntuación
+MultiPV de la posición padre como evaluación del hijo. La función pura de assessment
 es compartida entre ambos caminos para impedir divergencias de reglas o umbrales.
 
-## ADR-014 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Stockfish local como rival hosted/mÃƒÆ’Ã‚Â³vil
+## ADR-014 — Stockfish local como rival hosted/móvil
 
 **Estado:** aceptada.
 
-El modo hosted, estÃƒÆ’Ã‚Â¡tico o mÃƒÆ’Ã‚Â³vil sin companion no llamarÃƒÆ’Ã‚Â¡ a `/maia3-api`. En ese
-entorno, Stockfish WASM local asume tambiÃƒÆ’Ã‚Â©n el rol de `opponent` para conservar una
+El modo hosted, estático o móvil sin companion no llamará a `/maia3-api`. En ese
+entorno, Stockfish WASM local asume también el rol de `opponent` para conservar una
 ruta offline completa y no filtrar FEN/PGN a la red. Maia-3 sigue siendo una mejora
 opcional limitada al desarrollo local sobre `127.0.0.1`.
 
-Para evitar dos Workers compitiendo por CPU y memoria en mÃƒÆ’Ã‚Â³vil, anÃƒÆ’Ã‚Â¡lisis y rival
-comparten un ÃƒÆ’Ã‚Âºnico broker UCI. El broker serializa trabajos, da prioridad a la jugada
-del rival frente a anÃƒÆ’Ã‚Â¡lisis en cola, valida toda salida UCI y restaura las opciones del
-motor al cambiar de actor. El anÃƒÆ’Ã‚Â¡lisis pedagÃƒÆ’Ã‚Â³gico mantiene fuerza completa; el rival
+Para evitar dos Workers compitiendo por CPU y memoria en móvil, análisis y rival
+comparten un único broker UCI. El broker serializa trabajos, da prioridad a la jugada
+del rival frente a análisis en cola, valida toda salida UCI y restaura las opciones del
+motor al cambiar de actor. El análisis pedagógico mantiene fuerza completa; el rival
 degrada por tiempo breve y por las opciones de fuerza limitada que el backend soporte,
 primero `UCI_LimitStrength`/`UCI_Elo` y, si no existen, `Skill Level`.
 
 La tabla `Hash` deja de fijarse a 64 MB en todos los dispositivos. El runtime local la
-adapta a 16/32/64 MB segÃƒÆ’Ã‚Âºn memoria expuesta y concurrencia para reducir presiÃƒÆ’Ã‚Â³n en
+adapta a 16/32/64 MB según memoria expuesta y concurrencia para reducir presión en
 dispositivos lentos sin romper la partida. El fallback ASM.js permanece disponible solo
 cuando el backend WASM no puede arrancar.
 
@@ -238,31 +238,30 @@ La respuesta del rival puede introducir una espera breve intencional antes de
 aplicarse y animarse; esa espera es cancelable y no forma parte de una promesa fija
 de tiempo total de análisis.
 
-## ADR-017 — Espejo público de artefactos con GitHub Pages
+## ADR-017 --- Publicacion del mismo repositorio con GitHub Pages
 
 **Estado:** aceptada.
 
-El repositorio privado sigue siendo la fuente de verdad y el repositorio público
-`chess-coach-play` solo publica artefactos estáticos generados desde el commit exacto
-de origen. La conexión es unidireccional: el flujo de CI construye `build:pages`,
-valida el árbol resultante y lo sincroniza con el repo público mediante una deploy key
-SSH mínima con acceso de escritura solo al espejo. No existe edición manual del lado
-público ni sincronización bidireccional.
+El mismo repositorio publico `chess-coach` publica los artefactos estaticos
+generados desde el commit exacto de origen. El flujo de CI construye
+`build:pages`, valida el arbol resultante y lo despliega con el pipeline oficial
+de GitHub Pages (`configure-pages`, `upload-pages-artifact`, `deploy-pages`)
+usando el entorno `github-pages` y OIDC, sin mirrors paralelos ni deploy keys SSH.
 
-La publicación usa una base `/chess-coach-play/` separada de Sites/root y conserva la
-misma ruta offline-first del producto: la app publicada sigue usando Stockfish/WASM
-local para análisis y feedback, y no introduce Maia hosted ni dependencias remotas en
-la experiencia de Pages.
+La publicacion usa una base `/chess-coach/` separada de Sites/root y conserva la
+misma ruta offline-first del producto: la app publicada sigue usando
+Stockfish/WASM local para analisis y feedback, y no introduce Maia hosted ni
+dependencias remotas en la experiencia de Pages.
 
-El disparador operativo queda en `push` a `main` y `workflow_dispatch`. Un rollback se
-resuelve revirtiendo el commit de origen o repoblando el espejo con una versión
-anterior validada; el commit publicado debe quedar trazable en el historial del repo
-público para poder auditar qué árbol exacto se difundió.
+El disparador operativo queda en `push` a `main` y `workflow_dispatch`. Un
+rollback se resuelve revirtiendo el commit de origen o redeplegando una version
+anterior validada; el commit publicado debe quedar trazable en el historial del
+propio repositorio para poder auditar que arbol exacto se difundio.
 
-La validación mínima antes de publicar incluye `pnpm check`, `pnpm build:pages` y la
-validación del árbol generado. Si falla la sincronización, la versión pública anterior
-permanece como referencia hasta que una publicación nueva complete la cadena entera.
-
+La validacion minima antes de publicar incluye `pnpm check`, `pnpm build:pages`
+y la validacion del arbol generado. Si falla el despliegue, la version publica
+anterior permanece como referencia hasta que una publicacion nueva complete la
+cadena entera.
 ## ADR-016 — Timeouts separados para bootstrap, ready y búsqueda
 
 **Estado:** aceptada.

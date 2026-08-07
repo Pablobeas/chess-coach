@@ -66,7 +66,7 @@ cualquier respuesta perteneciente a la solicitud anterior.
   para no mezclar resultados ni reusar respuestas stale.
 - UCI/PGN: toda salida UCI se valida antes de convertirse en evidencia, feedback o
   persistencia.
-- Pages CSP: la publicacion estatica usa base `/chess-coach-play/` y una CSP
+- Pages CSP: la publicacion estatica usa base `/chess-coach/` y una CSP
   compatible con GitHub Pages mediante metadatos, no mediante cabeceras.
 - Source boundaries: `web -> coach -> engine` y `web -> chess-core`; `coach`,
   `engine` y `chess-core` no importan componentes de `apps/web`.
@@ -202,15 +202,14 @@ aplicación debe conservar el mismo contrato funcional cuando no haya conexión.
 o cualquier otro modelo de lenguaje no forma parte de la arquitectura aprobada del
 MVP; una prueba futura requeriría una decisión nueva, opt-in y fallback determinista.
 
-## Publicación pública y espejo de Pages
+## Publicación pública en GitHub Pages
 
-El repositorio privado es la fuente de verdad. El repositorio público `chess-coach-play`
-solo actúa como espejo de artefactos estáticos y no admite edición manual del producto.
-La conexión entre ambos lados es unidireccional: el flujo de CI publica el árbol
-generado desde el commit exacto del repo privado y deja trazabilidad por hash, no por
-contenido recreado a mano.
+El repositorio `Pablobeas/chess-coach` es la fuente de verdad y publica su propio
+artefacto estático en GitHub Pages. El flujo de CI construye y valida `apps/web/dist-pages`,
+lo sube como artifact oficial de Pages y despliega ese mismo árbol mediante el entorno
+`github-pages`, manteniendo trazabilidad por commit y evitando clones o espejos paralelos.
 
-`pnpm build:pages` construye el artefacto público con base `/chess-coach-play/`, separado
+`pnpm build:pages` construye el artefacto público con base `/chess-coach/`, separado
 del despliegue de Sites/root, e incluye los activos necesarios para que la PWA funcione
 desde GitHub Pages. Esta vía conserva el modelo offline-first: la app publicada sigue
 dependiendo de Stockfish/WASM local para análisis y feedback, y no introduce Maia

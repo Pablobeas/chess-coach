@@ -2,7 +2,7 @@
 
 Entrenador de ajedrez offline-first para jugar, analizar y recibir feedback determinista sin depender de un LLM. El producto combina un rival local de estilo humano para escritorio, analisis local con Stockfish y una PWA instalable para practica diaria.
 
-[Demo estatica en GitHub Pages](https://pablobeas.github.io/chess-coach-play/) |
+[Demo estatica en GitHub Pages](https://pablobeas.github.io/chess-coach/) |
 [Arquitectura](docs/ARCHITECTURE.md) |
 [Calidad](docs/QUALITY.md) |
 [Seguridad](SECURITY.md) |

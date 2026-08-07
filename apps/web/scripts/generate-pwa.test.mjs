@@ -99,7 +99,7 @@ test("Pages build scopes every generated PWA URL and ships a SPA fallback", asyn
   await withTempWebDist(async ({ webRoot, distRoot }) => {
     await execFileAsync(
       process.execPath,
-      [scriptPath, "--base=/chess-coach-play/", "--pages"],
+      [scriptPath, "--base=/chess-coach/", "--pages"],
       {
         cwd: webRoot,
         env: { ...process.env },
@@ -114,11 +114,11 @@ test("Pages build scopes every generated PWA URL and ships a SPA fallback", asyn
       await readFile(join(distRoot, "manifest.webmanifest"), "utf8"),
     );
     assert(
-      version.assets.every((asset) => asset.startsWith("/chess-coach-play/")),
+      version.assets.every((asset) => asset.startsWith("/chess-coach/")),
     );
-    assert.match(worker, /"\/chess-coach-play\/index\.html"/);
-    assert.equal(manifest.scope, "/chess-coach-play/");
-    assert.equal(manifest.icons[0].src, "/chess-coach-play/icon-192.png");
+    assert.match(worker, /"\/chess-coach\/index\.html"/);
+    assert.equal(manifest.scope, "/chess-coach/");
+    assert.equal(manifest.icons[0].src, "/chess-coach/icon-192.png");
     assert.equal(
       await readFile(join(distRoot, "404.html"), "utf8"),
       await readFile(join(distRoot, "index.html"), "utf8"),
@@ -132,7 +132,7 @@ test("rejects unsafe deployment bases", async () => {
     await assert.rejects(
       execFileAsync(
         process.execPath,
-        [scriptPath, "--base=chess-coach-play/"],
+        [scriptPath, "--base=chess-coach/"],
         {
           cwd: webRoot,
           env: { ...process.env },

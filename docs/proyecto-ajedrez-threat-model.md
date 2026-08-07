@@ -7,7 +7,7 @@ La superficie pública actual es pequeña: una PWA estática publicada en GitHub
 Los riesgos principales no están en exposición de cuentas o bases de datos, sino en cuatro frentes concretos:
 
 1. abuso del bridge local de Maia-3 durante desarrollo;
-2. fuga accidental de artefactos o secretos al espejo público de Pages;
+2. fuga accidental de artefactos o secretos al artefacto público de Pages;
 3. entradas locales malformadas o sobredimensionadas;
 4. procedencia, licencias y reproducibilidad parcial de dependencias redistribuidas o instaladas localmente.
 
@@ -39,7 +39,7 @@ Suposiciones operativas:
 - La demo pública en Pages es estática y no expone `/maia3-api` (`README.md`, `docs/ARCHITECTURE.md`).
 - El bridge de Maia se usa solo en entornos locales de desarrollo sobre loopback.
 - No hay telemetría ni recolección remota de partidas por defecto.
-- El espejo público puede ser consultado por cualquiera y debe asumirse permanentemente archivado.
+- El sitio público y el repositorio publicado pueden ser consultados por cualquiera y deben asumirse permanentemente archivados.
 
 ## System model/Primary components/Data flows and trust boundaries
 
@@ -49,7 +49,7 @@ Suposiciones operativas:
 - `chess-core` para legalidad, FEN y PGN.
 - Worker local de Stockfish/WASM para análisis y fallback de rival.
 - Bridge Node de Maia-3 para desarrollo local sobre `127.0.0.1`.
-- Flujo de publicación privado -> artefacto estático -> repositorio público de Pages.
+- Flujo de publicación del mismo repositorio -> artefacto estático -> entorno oficial de GitHub Pages.
 - Documentación y snapshot de terceros para cumplimiento/licencia.
 
 ### Data flows and trust boundaries
@@ -59,7 +59,7 @@ Límites de confianza:
 - Navegador del usuario <-> artefactos estáticos servidos desde GitHub Pages.
 - UI React <-> Worker local de Stockfish.
 - UI local de desarrollo <-> proxy Vite <-> bridge loopback de Maia.
-- Repositorio privado <-> workflow GitHub Actions <-> repositorio público `chess-coach-play`.
+- Repositorio fuente <-> workflow GitHub Actions <-> artifact oficial y entorno `github-pages`.
 - Repositorio local <-> instalación local de Maia/Python/Hugging Face cache.
 
 Flujos principales:
@@ -67,7 +67,7 @@ Flujos principales:
 1. La PWA carga HTML/JS/WASM/manifest/service worker desde el origen estático.
 2. La UI produce FEN/PGN locales y consulta Stockfish en Worker.
 3. En desarrollo local, la UI llama `/maia3-api`; Vite reescribe a `127.0.0.1:<port>` y el bridge valida origen, host, JSON, FEN e historial UCI antes de pedir una jugada a Maia.
-4. El workflow de publicación construye, valida y sincroniza solo artefactos permitidos al repositorio público.
+4. El workflow de publicación construye y valida `apps/web/dist-pages`, sube ese árbol como artifact oficial de Pages y lo despliega mediante el entorno `github-pages`.
 5. `setup-maia3.ps1` instala Maia desde un commit fijo, descarga el checkpoint oficial, verifica tamaño/hash y guarda evidencia local de la resolución.
 
 ```mermaid
@@ -77,8 +77,8 @@ flowchart LR
   P -. local dev only .-> V[Vite proxy]
   V --> B[Maia bridge 127.0.0.1]
   B --> M[Maia-3 local process]
-  R[Private repo] --> A[GitHub Actions]
-  A --> G[Public Pages repo]
+  R[Source repo] --> A[GitHub Actions]
+  A --> G[GitHub Pages deployment]
 ```
 
 ## Assets table
@@ -91,7 +91,7 @@ flowchart LR
 | Integridad del bridge Maia | Evitar uso por terceros o abuso entre procesos locales | Solo desarrollo local loopback | `Host`/`Origin`, `Content-Type`, body cap, cola limitada, `429`, validación FEN/UCI |
 | Binarios/licencias de Stockfish | Cumplimiento GPL y trazabilidad técnica | Repo y distribución pública | Hashes, snapshot fuente correspondiente, licencia copiada |
 | Procedencia de Maia y checkpoint | Evitar confiar ciegamente en runtime/modelo | Instalación local del mantenedor/desarrollador | Commit fijado, hash/tamaño verificados, reporte local de resolución |
-| Clave de despliegue de Pages | Control de escritura sobre espejo público | GitHub Actions | Secret de Actions, host keys fijadas, checkout sin credenciales persistentes |
+| Permisos de despliegue de Pages | Control de publicación del artefacto estático | GitHub Actions | `contents: read`, `pages: write`, `id-token: write`, acciones oficiales fijadas, sin deploy key SSH ni mirror |
 | Historial del repo público | Riesgo reputacional y de fuga retrospectiva | Público y archivado | No mitigado por código; depende de higiene/historial/visibilidad |
 
 ## Attacker model
@@ -128,7 +128,7 @@ Capacidades no asumidas:
 | `/maia3-api/move` vía Vite proxy | Solo dev local | Navegador/procesos locales | `Host`, `Origin`, JSON, body cap, replay de historial/FEN, `429` |
 | `/health` del bridge | Solo dev local | Navegador/procesos locales | `Host` loopback; sin secretos |
 | `tools/setup-maia3.ps1` | Local | Desarrollador | Commit/hash/tamaño fijados, reportes locales |
-| Workflow `publish-pages` | Mantenedor/GitHub Actions | Push a `main` o `workflow_dispatch` | `pnpm check`, `build:pages`, validación, SSH conocida, repo objetivo fijo |
+| Workflow `publish-pages` | Mantenedor/GitHub Actions | Push a `main` o `workflow_dispatch` | `pnpm check`, `build:pages`, validación, `configure-pages`, `upload-pages-artifact`, `deploy-pages`, permisos mínimos |
 
 ## Top abuse paths
 
@@ -149,7 +149,7 @@ Capacidades no asumidas:
 | TM-002 | Abuso local del bridge por flooding o cola infinita | Proceso local -> loopback | `queueLimit=1`, `429`, `Retry-After`, timeouts de warmup/move | Medium | Low | Low |
 | TM-003 | FEN/UCI/historial malicioso ejecuta rutas no previstas en Maia | UI/proceso local -> bridge -> engine | Validación de FEN, UCI, coincidencia `initialFen+moves==fen`, caps de longitud y `MAX_UCI_INFO_LINE_LENGTH` | Low | Medium | Low |
 | TM-004 | PGN local malformado o sobredimensionado degrada la UI | Archivo local -> navegador | 256 KB, 1024 plies, parseo legal y errores seguros | Medium | Low | Low |
-| TM-005 | Publicación accidental de secretos, runtime o mapas al repo público | Repo privado -> workflow -> repo público | Denylist/allowlist de artefactos, validación previa, preservación de `.git` solo en target, source/target safe sync | Low | High | Medium |
+| TM-005 | Publicación accidental de secretos, runtime o mapas al artefacto público de Pages | Repo fuente -> workflow -> Pages artifact | Denylist/allowlist de artefactos, validación previa, artifact oficial de Pages, acciones fijadas y sin mirror SSH | Low | High | Medium |
 | TM-006 | Clickjacking/framing parcial de la demo pública por limitación de Pages meta CSP | Navegador público -> Pages | `frame-src 'none'`; en hosts con `_headers` también `frame-ancestors 'none'` y `X-Frame-Options`; en Pages solo meta CSP | Medium | Medium | Medium |
 | TM-007 | Instalación local de Maia con transitivas variables o pesos redistribuidos indebidamente | Entorno local -> upstream | Commit y checkpoint fijados, hash/tamaño verificados, `install-report.json`, `resolved-packages.json`; lock portátil abierto | Medium | Medium | Medium |
 | TM-008 | Incumplimiento de redistribución GPL de Stockfish | Repo público -> terceros | Snapshot de fuente correspondiente, hashes, licencia, guía de verificación | Low | High | Medium |
@@ -178,7 +178,7 @@ Priority:
 ## Focus paths
 
 1. Mantener el bridge Maia estrictamente loopback-only y seguir probando `Host`/`Origin`/preflight/`429`.
-2. Mantener el publicador con allowlist cerrada y validar siempre antes de sincronizar el espejo público.
+2. Mantener el publicador con allowlist cerrada y validar siempre antes de subir el artifact oficial de Pages.
 3. Tratar como decisión de release la revisión de historial y visibilidad del repositorio público; aquí está hoy el riesgo más alto no mitigado por código.
 4. No redistribuir Maia ni sus pesos hasta cerrar por escrito la licencia de los weights o aceptar formalmente el residual.
 5. Repetir la verificación de fuente correspondiente de Stockfish en cada actualización de versión o binario.
@@ -193,5 +193,5 @@ Calidad de la evidencia:
 
 Preguntas abiertas:
 
-- ¿El historial completo del repositorio público `chess-coach-play` ha sido revisado para confirmar que nunca publicó secretos, artefactos privados o contenidos retirados?
-- ¿La visibilidad pública actual del repositorio espejo y de sus GitHub Pages es exactamente la pretendida para portfolio?
+- ¿El historial completo del repositorio público `Pablobeas/chess-coach` ha sido revisado para confirmar que nunca publicó secretos, artefactos privados o contenidos retirados?
+- ¿La visibilidad pública actual del repositorio `Pablobeas/chess-coach` y de sus GitHub Pages es exactamente la pretendida para portfolio?

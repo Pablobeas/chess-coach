@@ -76,15 +76,15 @@ La interacción con la jugada del rival mantiene:
 
 Flujo automático:
 
-- `main` de `Pablobeas/chess-coach` publica al espejo `Pablobeas/chess-coach-play`.
-- El sitio público se sirve desde GitHub Pages.
-- La sincronización espejo→publicación es automática; no debe requerir pasos manuales extra para el flujo normal.
+- `main` de `Pablobeas/chess-coach` publica directamente en GitHub Pages mediante el flujo oficial de Pages.
+- El sitio público se sirve desde `https://pablobeas.github.io/chess-coach/`.
+- La publicación no usa deploy key ni espejo separado en la configuración vigente.
+- `Pablobeas/chess-coach-play` y `https://pablobeas.github.io/chess-coach-play/` quedan como referencias históricas sustituidas, no como configuración actual.
 
 URLs conocidas:
 
 - repositorio fuente: `Pablobeas/chess-coach`
-- espejo público: `Pablobeas/chess-coach-play`
-- URL pública: `https://pablobeas.github.io/chess-coach-play/`
+- URL pública: `https://pablobeas.github.io/chess-coach/`
 
 ## Commits recientes relevantes
 
@@ -134,7 +134,7 @@ Nota: si `pnpm` no está disponible en PATH, el wrapper local puede fallar antes
 - Las fases postgame todavía usan heurística; no es una semántica perfecta.
 - No hay pedagogía postmovimiento por cada jugada terminal del postgame.
 - Hay imports parciales y legado que aún conviene consolidar.
-- GitHub Pages puede mostrar caché temporal en la URL pública aunque el espejo ya esté actualizado.
+- GitHub Pages puede mostrar caché temporal en la URL pública aunque la publicación ya esté actualizada.
 
 ## Para continuar
 

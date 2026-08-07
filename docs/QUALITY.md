@@ -116,10 +116,12 @@ las brechas de verificación manual están declaradas.
 
 ## Publicación en Pages
 
-- La publicación parte del commit exacto del repositorio privado y solo sincroniza el
-  árbol de artefactos estáticos hacia `chess-coach-play`.
-- `pnpm build:pages` debe generar una base `/chess-coach-play/` válida para recursos,
+- La publicación parte del commit exacto del repositorio fuente `Pablobeas/chess-coach`
+  y usa el flujo oficial de GitHub Pages, sin deploy key ni espejo separado.
+- `pnpm build:pages` debe generar una base `/chess-coach/` válida para recursos,
   service worker y fallback 404 sin depender de Sites/root.
+- La URL pública vigente es `https://pablobeas.github.io/chess-coach/`; la ruta
+  `chess-coach-play` queda como referencia histórica sustituida.
 - La ruta pública conserva el modo offline-first, el análisis local con Stockfish/WASM
   y excluye Maia hosted o cualquier backend remoto en la experiencia publicada.
 - Un rollback válido restaura un commit o versión anterior del repo público y vuelve a
@@ -175,4 +177,4 @@ las brechas de verificación manual están declaradas.
   busqueda activa.
 - La interfaz no debe introducir espera sincrona en el hilo principal.
 - Una entrega publicable debe incluir `pnpm build` y `pnpm check`; para Pages,
-  tambien la validacion del artefacto generado con base `/chess-coach-play/`.
+  tambien la validacion del artefacto generado con base `/chess-coach/`.

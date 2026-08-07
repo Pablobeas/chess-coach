@@ -7,18 +7,18 @@ describe("application URL base", () => {
       new URL(
         "stockfish/launcher.js",
         new URL(
-          normalizeApplicationBase("/chess-coach-play/"),
+          normalizeApplicationBase("/chess-coach/"),
           "https://pablobeas.github.io",
         ),
       ).toString(),
     ).toBe(
-      "https://pablobeas.github.io/chess-coach-play/stockfish/launcher.js",
+      "https://pablobeas.github.io/chess-coach/stockfish/launcher.js",
     );
   });
 
   it.each([
-    "chess-coach-play/",
-    "/chess-coach-play",
+    "chess-coach/",
+    "/chess-coach",
     "//host/",
     "/a/../b/",
     "/a/?x=1",
